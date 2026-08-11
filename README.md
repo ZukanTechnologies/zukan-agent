@@ -18,14 +18,41 @@ as authorization.
 Use `--release <tag>` for a deliberate immutable pin. The installer verifies the
 expected private producer, keyless Sigstore bundle, GitHub tag target, revision,
 archive digest, and every payload file before it changes the repository. It never
-overwrites existing agent policy or harness configuration.
+overwrites existing agent policy or harness configuration. Installation and
+updates remain local by default: they do not create a branch, commit, push, or
+pull request.
 
 Without `--release`, GitHub's latest non-draft, non-prerelease producer release
 is selected exactly once and persisted in `.agents/zukan/release-lock.json`.
 An explicit `--release <tag>` may select a prerelease for an approved pilot.
-Install does not silently float after that point. Reviewable updates and update
-warnings are delivered by the next workflow slice rather than hidden inside
-first installation.
+Install does not silently float after that point.
+
+## Deliberate updates and publication
+
+`install`, `update`, and `doctor` perform a bounded, best-effort stable-release
+check cached for 24 hours. A healthy older pin stays ready; the CLI reports the
+installed and available versions plus an exact local update command. A network
+or cache failure suppresses only the advisory notice and never invalidates a
+verified pin.
+
+```sh
+# Resolve and verify the latest approved stable release, keeping changes local
+npx @zukantech/agent update
+
+# Deliberately pin or roll back to one immutable release
+npx @zukantech/agent update --release v1.2.3
+
+# Explicitly publish only the generated install/update diff
+npx @zukantech/agent update --release v1.2.3 --pr
+```
+
+`--pr` is only for publishing the workflow bootstrap or pin change; it is not a
+prerequisite for ordinary application development. It requires a clean checkout
+on the repository's default branch, creates a dedicated branch, force-adds only
+installer-owned paths (even when generic ignore rules cover them), verifies the
+staged path set exactly, then commits, pushes, and opens the pull request. It
+refuses dirty, non-default-branch, out-of-scope, or partial diffs before any
+publication write.
 
 After installation, run:
 

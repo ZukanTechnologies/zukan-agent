@@ -44,6 +44,7 @@ async function preflight(target, manifest, lockBytes) {
   const evidence = path.join(repository, '.agents/zukan/evidence', manifest.release)
   const manifestEvidence = path.join(evidence, 'manifest.json')
   const bundleEvidence = path.join(evidence, 'sigstore.json')
+  const certificationEvidence = manifest.schemaVersion === 2 ? path.join(evidence, 'certification.json') : null
   if (await exists(vendor)) throw new Error('the selected vendor release path already exists')
   if (await exists(evidence)) throw new Error('the selected release evidence path already exists')
   const skills = manifest.files
@@ -56,6 +57,7 @@ async function preflight(target, manifest, lockBytes) {
     vendor,
     manifestEvidence,
     bundleEvidence,
+    ...(certificationEvidence ? [certificationEvidence] : []),
     path.join(repository, '.agents/zukan/workflow'),
     path.join(repository, '.agents/zukan/bin'),
     ...uniqueSkills.flatMap((skill) => [
@@ -65,11 +67,11 @@ async function preflight(target, manifest, lockBytes) {
   ]
   for (const entry of targets) {
     await requireSafeAncestors(repository, entry)
-    if (entry !== lock && entry !== vendor && entry !== manifestEvidence && entry !== bundleEvidence && await exists(entry)) {
+    if (entry !== lock && entry !== vendor && entry !== manifestEvidence && entry !== bundleEvidence && entry !== certificationEvidence && await exists(entry)) {
       throw new Error(`${path.relative(repository, entry)} already exists; installation will not overwrite it`)
     }
   }
-  return { repository, lock, vendor, evidence, manifestEvidence, bundleEvidence, targets, skills: uniqueSkills }
+  return { repository, lock, vendor, evidence, manifestEvidence, bundleEvidence, certificationEvidence, targets, skills: uniqueSkills }
 }
 
 async function removeEmptyParents(paths) {
@@ -82,7 +84,7 @@ async function assertAncestorsSafe(plan) {
   for (const target of plan.targets) await requireSafeAncestors(plan.repository, target)
 }
 
-async function commitInstallation(plan, extracted, manifestBytes, bundleBytes, lockBytes) {
+async function commitInstallation(plan, extracted, manifestBytes, bundleBytes, certificationBytes, lockBytes) {
   const created = []
   const parentCandidates = [
     path.join(plan.repository, '.claude/skills'),
@@ -138,6 +140,11 @@ async function commitInstallation(plan, extracted, manifestBytes, bundleBytes, l
     await assertAncestorsSafe(plan)
     await writeFile(plan.bundleEvidence, bundleBytes, { flag: 'wx' })
     created.push(plan.bundleEvidence)
+    if (certificationBytes) {
+      await assertAncestorsSafe(plan)
+      await writeFile(plan.certificationEvidence, certificationBytes, { flag: 'wx' })
+      created.push(plan.certificationEvidence)
+    }
     await assertAncestorsSafe(plan)
     await writeFile(plan.lock, lockBytes, { flag: 'wx' })
     created.push(plan.lock)
@@ -234,12 +241,12 @@ async function describeExistingLock(lockDirectory) {
 
 export async function installRelease({ target, requestedRelease, github, verifySigstore }) {
   const verified = await resolveVerifiedRelease({ requestedRelease, github, verifySigstore })
-  const { manifest, manifestBytes, bundleBytes, lockBytes, extracted } = verified
+  const { manifest, manifestBytes, bundleBytes, certificationBytes, lockBytes, extracted } = verified
   let mutex
   try {
     mutex = await acquireInstallationLock(target)
     const plan = await preflight(target, manifest, lockBytes)
-    const committed = await commitInstallation(plan, extracted.root, manifestBytes, bundleBytes, lockBytes)
+    const committed = await commitInstallation(plan, extracted.root, manifestBytes, bundleBytes, certificationBytes, lockBytes)
     const changedPaths = [
       '.agents/zukan/release-lock.json',
       `.agents/zukan/vendor/${manifest.release}`,

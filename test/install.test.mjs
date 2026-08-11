@@ -81,6 +81,56 @@ test('an authorized install verifies immutable evidence before materializing one
   )
 })
 
+test('a stable install verifies and preserves signed harness certification evidence', async (t) => {
+  const target = await targetFixture(t)
+  const release = await createFixtureRelease(t, {
+    release: 'v1.1.0',
+    certified: true,
+    prerelease: false,
+  })
+  const events = []
+
+  await installRelease({
+    target,
+    github: release.github({ events, authorized: true }),
+    verifySigstore: release.verifier({ events }),
+  })
+
+  assert.deepEqual(events.slice(0, 8), [
+    'authorize',
+    'resolve-release',
+    'download-manifest',
+    'download-bundle',
+    'download-archive',
+    'download-certification',
+    'resolve-tag',
+    'verify-signature',
+  ])
+  assert.deepEqual(
+    await readFile(path.join(target, '.agents/zukan/evidence/v1.1.0/certification.json')),
+    release.certificationBytes,
+  )
+  const lock = JSON.parse(await readFile(path.join(target, '.agents/zukan/release-lock.json'), 'utf8'))
+  assert.equal(lock.certificationSha256, sha256(release.certificationBytes))
+
+  const rejectedTarget = await targetFixture(t)
+  const tampered = await createFixtureRelease(t, {
+    release: 'v1.1.0',
+    certified: true,
+    prerelease: false,
+    fault: { certificationBytes: Buffer.from('{"tampered":true}\n') },
+  })
+  await assert.rejects(
+    installRelease({
+      target: rejectedTarget,
+      github: tampered.github({ authorized: true }),
+      verifySigstore: tampered.verifier(),
+    }),
+    /certification/i,
+  )
+  assert.deepEqual(await readdir(rejectedTarget), ['.git'])
+})
+
 test('authorization denial returns no protected content and leaves the target untouched', async (t) => {
   const target = await targetFixture(t)
   const before = await readdir(target)

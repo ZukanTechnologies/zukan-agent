@@ -9,6 +9,7 @@ const defaults = {
   'workflow/catalog.json': '{"schemaVersion":1}\n',
   'bin/evaluate-route-admission.mjs': 'export {}\n',
 }
+const certificationAsset = 'zukan-agent-certification.json'
 
 export async function createFixtureRelease(t, options = {}) {
   const fixture = await mkdtemp(path.join(tmpdir(), 'zukan-agent-source-'))
@@ -17,6 +18,7 @@ export async function createFixtureRelease(t, options = {}) {
   const revision = options.revision ?? 'a'.repeat(40)
   const files = options.files ?? defaults
   const fault = options.fault ?? {}
+  const certified = options.certified ?? false
   const payload = path.join(fixture, 'payload')
   await mkdir(payload)
   const inventory = []
@@ -33,8 +35,38 @@ export async function createFixtureRelease(t, options = {}) {
   const archivePath = path.join(fixture, RELEASE_ASSETS.archive)
   await tar.c({ cwd: payload, file: archivePath, gzip: true, portable: true }, ['.'])
   const archive = await readFile(archivePath)
-  const manifest = {
+  const certification = certified ? {
     schemaVersion: 1,
+    kind: 'zukan-agent-certification',
+    repository: PRIVATE_REPOSITORY,
+    release,
+    revision,
+    contract: { path: 'workflow/v1-certification-contract.json', sha256: 'c'.repeat(64) },
+    harnesses: [
+      { name: 'claude-code', package: '@anthropic-ai/claude-code', binary: 'claude', version: '2.1.220', result: 'passed' },
+      { name: 'codex', package: '@openai/codex', binary: 'codex', version: '0.146.0', result: 'passed' },
+      { name: 'opencode', package: 'opencode-ai', binary: 'opencode', version: '1.18.11', result: 'passed' },
+    ],
+    gates: [
+      { name: 'native-marketplace-installation', result: 'passed' },
+      { name: 'repository-discovery', result: 'passed' },
+      { name: 'capability-admission', result: 'passed' },
+      { name: 'content-identity', result: 'passed' },
+    ],
+    nativeMarketplace: {
+      marketplace: 'zukan-technologies',
+      plugin: 'zukan-sdlc',
+      version: release.split('-')[0].slice(1),
+      skills: 10,
+      claude: 'installed',
+      codex: 'installed',
+      opencode: 'discovered',
+      repository: 'vendored',
+    },
+  } : null
+  const certificationBytes = certified ? Buffer.from(`${JSON.stringify(certification, null, 2)}\n`) : null
+  const manifest = {
+    schemaVersion: certified ? 2 : 1,
     kind: 'zukan-agent-release',
     repository: PRIVATE_REPOSITORY,
     release,
@@ -43,6 +75,7 @@ export async function createFixtureRelease(t, options = {}) {
       ? { ...expectedProducer(release), identity: fault.producerIdentity }
       : expectedProducer(release),
     archive: { name: RELEASE_ASSETS.archive, sha256: sha256(archive) },
+    ...(certified ? { certification: { name: certificationAsset, sha256: sha256(certificationBytes) } } : {}),
     files: inventory.sort((left, right) => left.path.localeCompare(right.path)),
   }
   const manifestBytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`)
@@ -51,12 +84,14 @@ export async function createFixtureRelease(t, options = {}) {
     [RELEASE_ASSETS.manifest, manifestBytes],
     [RELEASE_ASSETS.bundle, bundleBytes],
     [RELEASE_ASSETS.archive, fault.archiveBytes ?? archive],
+    ...(certified ? [[certificationAsset, fault.certificationBytes ?? certificationBytes]] : []),
   ])
   return {
     release,
     revision,
     files,
     archive,
+    certificationBytes,
     manifestBytes,
     github({ events = [], authorized = true } = {}) {
       return {
@@ -66,10 +101,10 @@ export async function createFixtureRelease(t, options = {}) {
         },
         async resolveRelease() {
           events.push('resolve-release')
-          return { tagName: release, draft: false, prerelease: true }
+          return { tagName: release, draft: false, prerelease: options.prerelease ?? true }
         },
         async downloadAsset(_release, name) {
-          events.push(`download-${name === RELEASE_ASSETS.manifest ? 'manifest' : name === RELEASE_ASSETS.bundle ? 'bundle' : 'archive'}`)
+          events.push(`download-${name === RELEASE_ASSETS.manifest ? 'manifest' : name === RELEASE_ASSETS.bundle ? 'bundle' : name === certificationAsset ? 'certification' : 'archive'}`)
           return assets.get(name)
         },
         async resolveTag() {

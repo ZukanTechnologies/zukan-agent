@@ -8,6 +8,7 @@ import {
   parseJson,
   pathIsUnsafe,
   sha256,
+  validateCertification,
   validateManifest,
   validateReleaseName,
 } from './contracts.mjs'
@@ -46,14 +47,16 @@ function validateLock(lock) {
   }
   exactKeys(lock, [
     ...baseFields,
+    ...(lock?.schemaVersion === 2 ? ['certificationSha256'] : []),
     ...(hasAdmission ? ['capabilityAdmission', 'capabilityAdmissionAttestation'] : []),
   ], 'release lock')
-  if (lock.schemaVersion !== 1 || lock.kind !== 'zukan-agent-release-lock' || lock.repository !== PRIVATE_REPOSITORY) {
+  if (![1, 2].includes(lock.schemaVersion) || lock.kind !== 'zukan-agent-release-lock' || lock.repository !== PRIVATE_REPOSITORY) {
     throw new Error('release lock authority is invalid')
   }
   validateReleaseName(lock.release)
   for (const [label, digest] of [
     ['revision', lock.revision], ['archive', lock.archiveSha256], ['manifest', lock.manifestSha256], ['signature bundle', lock.signatureBundleSha256],
+    ...(lock.schemaVersion === 2 ? [['certification', lock.certificationSha256]] : []),
   ]) {
     const pattern = label === 'revision' ? /^[a-f0-9]{40}$/ : /^[a-f0-9]{64}$/
     if (typeof digest !== 'string' || !pattern.test(digest)) throw new Error(`release lock ${label} is invalid`)
@@ -120,7 +123,14 @@ export async function doctorRelease({ target, github, verifySigstore, trustedPol
   const evidence = path.join(repository, '.agents/zukan/evidence', lock.release)
   const manifestBytes = await readFile(path.join(evidence, 'manifest.json'))
   const bundleBytes = await readFile(path.join(evidence, 'sigstore.json'))
-  if (sha256(manifestBytes) !== lock.manifestSha256 || sha256(bundleBytes) !== lock.signatureBundleSha256) {
+  const certificationBytes = lock.schemaVersion === 2
+    ? await readFile(path.join(evidence, 'certification.json'))
+    : null
+  if (
+    sha256(manifestBytes) !== lock.manifestSha256
+    || sha256(bundleBytes) !== lock.signatureBundleSha256
+    || (certificationBytes && sha256(certificationBytes) !== lock.certificationSha256)
+  ) {
     throw new Error('installed release evidence digest has drifted')
   }
   const manifest = validateManifest(parseJson(manifestBytes, 'release manifest'), lock.release)
@@ -130,6 +140,15 @@ export async function doctorRelease({ target, github, verifySigstore, trustedPol
     || JSON.stringify(manifest.producer) !== JSON.stringify(lock.producer)
     || JSON.stringify(manifest.files) !== JSON.stringify(lock.files)) {
     throw new Error('release lock does not match signed release evidence')
+  }
+  if (manifest.schemaVersion !== lock.schemaVersion) {
+    throw new Error('release lock schema does not match signed release evidence')
+  }
+  if (certificationBytes) {
+    if (manifest.certification.sha256 !== lock.certificationSha256) {
+      throw new Error('release lock certification does not match signed release evidence')
+    }
+    validateCertification(parseJson(certificationBytes, 'release certification'), manifest)
   }
   const producer = expectedProducer(lock.release)
   await verifySigstore({

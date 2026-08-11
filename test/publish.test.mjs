@@ -92,6 +92,19 @@ test('--pr force-adds an installer-owned payload hidden by consumer ignore rules
   assert.deepEqual(add.slice(0, 4), ['git', 'add', '-f', '-A'])
 })
 
+test('--pr accepts the bounded removal of the legacy current link', async () => {
+  const actual = ['.agents/zukan/current', '.agents/zukan/release-lock.json']
+  const fixture = runnerFixture({ actual })
+  await publishChange({
+    target: '/consumer', runner: fixture.runner,
+    operation: async () => ({
+      status: 'updated', release: 'v0.1.0-alpha.6', revision: 'b'.repeat(40),
+      changedPaths: actual,
+    }),
+  })
+  assert.equal(fixture.calls.some((call) => call[0] === 'git' && call[1] === 'push'), true)
+})
+
 test('--pr disables local hooks and refuses any committed byte mismatch', async () => {
   const fixture = runnerFixture({ committedTree: 'd'.repeat(40) })
   await assert.rejects(

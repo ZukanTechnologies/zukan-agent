@@ -10,6 +10,8 @@ import {
 } from './contracts.mjs'
 import { extractVerifiedArchive } from './archive.mjs'
 
+const isStableRelease = (release) => /^v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/.test(release)
+
 export function releaseLock({ manifest, manifestBytes, bundleBytes, certificationBytes }) {
   return {
     schemaVersion: manifest.schemaVersion,
@@ -38,7 +40,7 @@ export async function resolveVerifiedRelease({ requestedRelease, github, verifyS
   const bundleBytes = await github.downloadAsset(release, RELEASE_ASSETS.bundle)
   const archive = await github.downloadAsset(release, RELEASE_ASSETS.archive)
   const manifest = validateManifest(parseJson(manifestBytes, 'release manifest'), selectedRelease)
-  if (!release.prerelease && manifest.schemaVersion !== 2) {
+  if (isStableRelease(selectedRelease) && manifest.schemaVersion !== 2) {
     throw new Error('stable releases must use the certified manifest schema')
   }
   const certificationBytes = manifest.schemaVersion === 2

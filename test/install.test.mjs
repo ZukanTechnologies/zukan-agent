@@ -147,6 +147,22 @@ test('a stable release must use the certified manifest schema and bind its contr
   )
   assert.deepEqual(await readdir(uncertifiedTarget), ['.git'])
 
+  const mislabeledTarget = await targetFixture(t)
+  const mislabeled = await createFixtureRelease(t, {
+    release: 'v1.1.0',
+    prerelease: true,
+  })
+  await assert.rejects(
+    installRelease({
+      target: mislabeledTarget,
+      requestedRelease: 'v1.1.0',
+      github: mislabeled.github({ authorized: true }),
+      verifySigstore: mislabeled.verifier(),
+    }),
+    /stable.*certification|certified.*schema/i,
+  )
+  assert.deepEqual(await readdir(mislabeledTarget), ['.git'])
+
   const driftedTarget = await targetFixture(t)
   const drifted = await createFixtureRelease(t, {
     release: 'v1.1.0',

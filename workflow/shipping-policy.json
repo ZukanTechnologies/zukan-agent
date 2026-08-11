@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "kind": "zukan-shipping-policy",
+  "policy": {
+    "sources": {
+      "pullRequest": "workflow/shipping-policy.json#/policy/pullRequestBase",
+      "staging": "workflow/shipping-policy.json#/policy/stagingRequired",
+      "linear": "workflow/shipping-policy.json#/policy/publishedLinearState",
+      "cleanup": "workflow/shipping-policy.json#/policy/cleanupIgnoredFiles",
+      "validation": "workflow/shipping-policy.json#/policy/requiredChecks",
+      "visual": "workflow/shipping-policy.json#/policy/visualEvidenceRule",
+      "review": "workflow/shipping-policy.json#/policy/requiredReviewSurfaces"
+    },
+    "repositoryHost": "github.com",
+    "allowedRemoteTransports": [
+      "https",
+      "ssh"
+    ],
+    "pullRequestUrlTemplate": "https://github.com/{repository}/pull/{number}",
+    "pullRequestBase": "main",
+    "issueBranchPattern": "^(?:feature|fix|chore)/ZUK-\\d+-.+$",
+    "pullRequestTitlePattern": "^(?:feat|fix|chore|docs|refactor|test|ci|build|perf|style|revert)(?:\\([^)]+\\))?: ZUK-\\d+ .+$",
+    "publishAsDraft": true,
+    "mergeMethod": "squash",
+    "publishedLinearState": "In Review",
+    "completedLinearState": "Done",
+    "stagingRequired": false,
+    "visualEvidenceRule": "never",
+    "visualEvidenceUiPathPatterns": [],
+    "cleanupIgnoredFiles": "preserve",
+    "requiredChecks": [
+      "validate"
+    ],
+    "allowEmptyRequestedReviews": true,
+    "requiredReviewSurfaces": [],
+    "reviewDismissalRules": []
+  }
+}

@@ -14,8 +14,6 @@ import {
 } from './contracts.mjs'
 import { extractVerifiedArchive } from './archive.mjs'
 
-const MAX_UNVERIFIABLE_LOCK_AGE_MS = 30 * 60 * 1_000
-
 async function exists(file) {
   try { return await lstat(file) } catch (error) { if (error.code === 'ENOENT') return null; throw error }
 }
@@ -214,7 +212,6 @@ function lockIsLive(owner) {
   if (owner.hostname !== hostname()) return null
   const currentBoot = currentBootEpochMinute()
   if (owner.bootEpochMinute !== null && currentBoot !== null && owner.bootEpochMinute !== currentBoot) return false
-  if (Date.now() - Date.parse(owner.startedAt) > MAX_UNVERIFIABLE_LOCK_AGE_MS) return false
   try {
     process.kill(owner.pid, 0)
     return true

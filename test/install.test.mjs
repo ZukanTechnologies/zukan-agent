@@ -248,10 +248,10 @@ test('a malformed mutation lock fails safely with explicit recovery guidance', a
   assert.deepEqual((await readdir(target)).sort(), ['.git', '.zukan-agent-install.lock'])
 })
 
-test('a same-boot reused PID becomes stale at the bounded lease', async (t) => {
+test('an old lock with a live PID remains in progress', async (t) => {
   const target = await targetFixture(t)
   await writeMutationLock(target, {
-    bootEpochMinute: 123,
+    bootEpochMinute: null,
     pid: process.pid,
     startedAt: new Date(Date.now() - 31 * 60_000).toISOString(),
     nonce: 'c'.repeat(36),
@@ -264,7 +264,7 @@ test('a same-boot reused PID becomes stale at the bounded lease', async (t) => {
       github: release.github({ authorized: true }),
       verifySigstore: release.verifier(),
     }),
-    /stale.*inspect.*remove/i,
+    /installation.*in progress/i,
   )
   assert.equal((await lstat(path.join(target, '.zukan-agent-install.lock'))).isDirectory(), true)
 })

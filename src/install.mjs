@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { constants } from 'node:fs'
-import { cp, lstat, mkdir, open, readFile, realpath, rename, rm, rmdir, symlink, writeFile } from 'node:fs/promises'
+import { cp, lstat, mkdir, readFile, realpath, rename, rm, rmdir, symlink, writeFile } from 'node:fs/promises'
 import { hostname, uptime } from 'node:os'
 import path from 'node:path'
 import {
@@ -173,64 +172,49 @@ async function commitInstallation(plan, extracted, manifestBytes, bundleBytes, l
 
 async function acquireInstallationLock(target) {
   const repository = await realpath(target)
-  const lockPath = path.join(repository, '.zukan-agent-install.lock')
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    let handle
-    try {
-      handle = await open(lockPath, 'wx', 0o600)
-    } catch (error) {
-      if (error.code !== 'EEXIST') throw error
-      if (attempt === 1) throw new Error('another Zukan agent installation is in progress')
-      await recoverStaleLock(lockPath)
-      continue
-    }
-    const identity = await handle.stat()
-    const owner = {
-      schemaVersion: 1,
-      kind: 'zukan-agent-install-lock',
-      hostname: hostname(),
-      bootEpochMinute: currentBootEpochMinute(),
-      pid: process.pid,
-      startedAt: new Date().toISOString(),
-      nonce: randomUUID(),
-    }
-    try {
-      await handle.writeFile(`${JSON.stringify(owner)}\n`)
-      await handle.sync()
-    } catch (error) {
-      await handle.close()
-      await removeMatchingLock(lockPath, identity)
-      throw error
-    }
-    return {
-      async release() {
-        await handle.close()
-        await removeMatchingLock(lockPath, identity)
-      },
-    }
+  const lockDirectory = path.join(repository, '.zukan-agent-install.lock')
+  const ownerPath = path.join(lockDirectory, 'owner.json')
+  try {
+    await mkdir(lockDirectory, { mode: 0o700 })
+  } catch (error) {
+    if (error.code !== 'EEXIST') throw error
+    await describeExistingLock(lockDirectory)
   }
-  throw new Error('unable to acquire the repository mutation lock')
+  const owner = {
+    schemaVersion: 1,
+    kind: 'zukan-agent-install-lock',
+    hostname: hostname(),
+    bootEpochMinute: currentBootEpochMinute(),
+    pid: process.pid,
+    startedAt: new Date().toISOString(),
+    nonce: randomUUID(),
+  }
+  try {
+    await writeFile(ownerPath, `${JSON.stringify(owner)}\n`, { flag: 'wx', mode: 0o600 })
+  } catch (error) {
+    await rmdir(lockDirectory)
+    throw error
+  }
+  return {
+    async release() {
+      let current
+      try { current = parseJson(await readFile(ownerPath), 'installation lock') } catch { return }
+      if (current.nonce !== owner.nonce) return
+      await rm(ownerPath)
+      await rmdir(lockDirectory)
+    },
+  }
 }
 
 function currentBootEpochMinute() {
   try { return Math.floor((Date.now() / 1000 - uptime()) / 60) } catch { return null }
 }
 
-async function removeMatchingLock(lockPath, identity) {
-  try {
-    const current = await lstat(lockPath)
-    if (current.dev === identity.dev && current.ino === identity.ino) await rm(lockPath)
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error
-  }
-}
-
 function lockIsLive(owner) {
   if (owner.hostname !== hostname()) return null
   const currentBoot = currentBootEpochMinute()
   if (owner.bootEpochMinute !== null && currentBoot !== null && owner.bootEpochMinute !== currentBoot) return false
-  if ((owner.bootEpochMinute === null || currentBoot === null)
-    && Date.now() - Date.parse(owner.startedAt) > MAX_UNVERIFIABLE_LOCK_AGE_MS) return false
+  if (Date.now() - Date.parse(owner.startedAt) > MAX_UNVERIFIABLE_LOCK_AGE_MS) return false
   try {
     process.kill(owner.pid, 0)
     return true
@@ -241,13 +225,14 @@ function lockIsLive(owner) {
   }
 }
 
-async function recoverStaleLock(lockPath) {
-  let handle
+async function describeExistingLock(lockDirectory) {
   try {
-    handle = await open(lockPath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
-    const identity = await handle.stat()
-    if (!identity.isFile() || identity.size > 4_096) throw new Error('invalid lock file')
-    const owner = parseJson(await handle.readFile(), 'installation lock')
+    const metadata = await lstat(lockDirectory)
+    if (!metadata.isDirectory() || metadata.isSymbolicLink()) throw new Error('invalid lock directory')
+    const ownerPath = path.join(lockDirectory, 'owner.json')
+    const ownerMetadata = await lstat(ownerPath)
+    if (!ownerMetadata.isFile() || ownerMetadata.isSymbolicLink() || ownerMetadata.size > 4_096) throw new Error('invalid lock owner')
+    const owner = parseJson(await readFile(ownerPath), 'installation lock')
     exactKeys(owner, ['schemaVersion', 'kind', 'hostname', 'bootEpochMinute', 'pid', 'startedAt', 'nonce'], 'installation lock')
     if (owner.schemaVersion !== 1
       || owner.kind !== 'zukan-agent-install-lock'
@@ -261,12 +246,9 @@ async function recoverStaleLock(lockPath) {
     const live = lockIsLive(owner)
     if (live === true) throw new Error('another Zukan agent installation is in progress')
     if (live === null) throw new Error('the repository mutation lock belongs to another host; inspect it before manual removal')
-    await handle.close()
-    handle = undefined
-    await removeMatchingLock(lockPath, identity)
+    throw new Error('a stale Zukan installation lock remains; inspect and remove .zukan-agent-install.lock only after confirming no installer is active')
   } catch (error) {
-    if (handle) await handle.close()
-    if (/another Zukan|another host/.test(error.message)) throw error
+    if (/another Zukan|another host|stale Zukan/.test(error.message)) throw error
     throw new Error('the repository has an unreadable stale installation lock; inspect and remove .zukan-agent-install.lock only after confirming no installer is active')
   }
 }

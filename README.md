@@ -61,3 +61,8 @@ ancestors are revalidated throughout mutation. As with Git and npm themselves,
 the bootstrap assumes the local repository and OS account are trusted; it does
 not claim to defend against a malicious concurrent process already running as
 the same user with permission to rewrite the repository.
+
+If an unclean exit leaves `.zukan-agent-install.lock/`, the next run identifies
+whether its owner is live, stale, cross-host, or malformed. Stale state is never
+deleted automatically: inspect it and remove that directory only after
+confirming no installer is active, then rerun the same install command.

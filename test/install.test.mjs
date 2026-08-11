@@ -16,6 +16,22 @@ async function targetFixture(t) {
   return root
 }
 
+async function writeMutationLock(target, overrides = {}) {
+  const lock = path.join(target, '.zukan-agent-install.lock')
+  await mkdir(lock)
+  await writeFile(path.join(lock, 'owner.json'), `${JSON.stringify({
+    schemaVersion: 1,
+    kind: 'zukan-agent-install-lock',
+    hostname: hostname(),
+    bootEpochMinute: null,
+    pid: process.pid,
+    startedAt: new Date().toISOString(),
+    nonce: 'a'.repeat(36),
+    ...overrides,
+  })}\n`)
+  return lock
+}
+
 test('an authorized install verifies immutable evidence before materializing one exact pin', async (t) => {
   const target = await targetFixture(t)
   const release = await createFixtureRelease(t, {
@@ -179,15 +195,7 @@ test('a late filesystem failure rolls back every installer-created path', async 
 
 test('an existing repository mutation lock blocks concurrent installation without writes', async (t) => {
   const target = await targetFixture(t)
-  await writeFile(path.join(target, '.zukan-agent-install.lock'), `${JSON.stringify({
-    schemaVersion: 1,
-    kind: 'zukan-agent-install-lock',
-    hostname: hostname(),
-    bootEpochMinute: null,
-    pid: process.pid,
-    startedAt: new Date().toISOString(),
-    nonce: 'a'.repeat(36),
-  })}\n`)
+  await writeMutationLock(target)
   const release = await createFixtureRelease(t)
   await assert.rejects(
     installRelease({
@@ -201,33 +209,32 @@ test('an existing repository mutation lock blocks concurrent installation withou
   assert.deepEqual((await readdir(target)).sort(), ['.git', '.zukan-agent-install.lock'])
 })
 
-test('a lock left by a dead process is recovered and does not strand installation', async (t) => {
+test('a lock left by a dead process is identified with safe recovery guidance', async (t) => {
   const target = await targetFixture(t)
-  await writeFile(path.join(target, '.zukan-agent-install.lock'), `${JSON.stringify({
-    schemaVersion: 1,
-    kind: 'zukan-agent-install-lock',
-    hostname: hostname(),
-    bootEpochMinute: null,
+  await writeMutationLock(target, {
     pid: 2_147_483_647,
     startedAt: new Date(Date.now() - 60_000).toISOString(),
     nonce: 'b'.repeat(36),
-  })}\n`)
+  })
   const release = await createFixtureRelease(t)
 
-  await installRelease({
-    target,
-    requestedRelease: release.release,
-    github: release.github({ authorized: true }),
-    verifySigstore: release.verifier(),
-  })
-
-  await assert.rejects(lstat(path.join(target, '.zukan-agent-install.lock')), { code: 'ENOENT' })
-  assert.equal((await lstat(path.join(target, '.agents/zukan/release-lock.json'))).isFile(), true)
+  await assert.rejects(
+    installRelease({
+      target,
+      requestedRelease: release.release,
+      github: release.github({ authorized: true }),
+      verifySigstore: release.verifier(),
+    }),
+    /stale.*inspect.*remove/i,
+  )
+  assert.equal((await lstat(path.join(target, '.zukan-agent-install.lock'))).isDirectory(), true)
+  await assert.rejects(lstat(path.join(target, '.agents')), { code: 'ENOENT' })
 })
 
 test('a malformed mutation lock fails safely with explicit recovery guidance', async (t) => {
   const target = await targetFixture(t)
-  await writeFile(path.join(target, '.zukan-agent-install.lock'), 'not trusted metadata\n')
+  await mkdir(path.join(target, '.zukan-agent-install.lock'))
+  await writeFile(path.join(target, '.zukan-agent-install.lock/owner.json'), 'not trusted metadata\n')
   const release = await createFixtureRelease(t)
   await assert.rejects(
     installRelease({
@@ -241,23 +248,23 @@ test('a malformed mutation lock fails safely with explicit recovery guidance', a
   assert.deepEqual((await readdir(target)).sort(), ['.git', '.zukan-agent-install.lock'])
 })
 
-test('an unverifiable old lock is recovered even if its PID has been reused', async (t) => {
+test('a same-boot reused PID becomes stale at the bounded lease', async (t) => {
   const target = await targetFixture(t)
-  await writeFile(path.join(target, '.zukan-agent-install.lock'), `${JSON.stringify({
-    schemaVersion: 1,
-    kind: 'zukan-agent-install-lock',
-    hostname: hostname(),
-    bootEpochMinute: null,
+  await writeMutationLock(target, {
+    bootEpochMinute: 123,
     pid: process.pid,
     startedAt: new Date(Date.now() - 31 * 60_000).toISOString(),
     nonce: 'c'.repeat(36),
-  })}\n`)
-  const release = await createFixtureRelease(t)
-  await installRelease({
-    target,
-    requestedRelease: release.release,
-    github: release.github({ authorized: true }),
-    verifySigstore: release.verifier(),
   })
-  await assert.rejects(lstat(path.join(target, '.zukan-agent-install.lock')), { code: 'ENOENT' })
+  const release = await createFixtureRelease(t)
+  await assert.rejects(
+    installRelease({
+      target,
+      requestedRelease: release.release,
+      github: release.github({ authorized: true }),
+      verifySigstore: release.verifier(),
+    }),
+    /stale.*inspect.*remove/i,
+  )
+  assert.equal((await lstat(path.join(target, '.zukan-agent-install.lock'))).isDirectory(), true)
 })

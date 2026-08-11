@@ -46,6 +46,18 @@ mutable action tags before the release workflow could be accepted.
   `4713f18164a7c845042b14f3994366aeb2d2c35a`; a clean public `npx` migration
   and unversioned online doctor both passed against a disposable real Zukan
   clone.
-
-Independent review, npm trusted-publisher registration, alpha.4 OIDC release,
-and CI evidence will be appended before completion.
+- PR #4 merged as `27e9e6b7f5002f24a706462c53047c851c30465e`
+  after the GitHub `validate` and both Socket checks passed.
+- npm trust configuration `b59d9890-5cd2-4e28-a44f-a8139cf4dd88` binds only
+  `ZukanTechnologies/zukan-agent`, `publish.yml`, environment `npm`, and the
+  `npm publish` permission.
+- GitHub prerelease `v0.1.0-alpha.4` triggered release workflow run
+  `31452681541`, which passed at the exact merged revision with no npm token.
+- The public registry reports alpha.4 shasum
+  `17d612f4daa7a51e7c66f6c4bbd716795b088447`, 17 files, and SLSA provenance;
+  `next` is alpha.4 while `latest` remains the bootstrap alpha.3.
+- A clean public-registry alpha.4 invocation reported the installed Zukan
+  workflow pin healthy at producer release `v0.1.0-alpha.6`.
+- npm package settings were hardened after the OIDC proof: 2FA is required and
+  bypass-capable traditional publishing tokens are disallowed. The trusted
+  publisher remains enabled and is unaffected by that restriction.

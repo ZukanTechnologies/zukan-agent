@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { cp, lstat, mkdir, readFile, realpath, rename, rm, rmdir, symlink, writeFile } from 'node:fs/promises'
+import { cp, lstat, mkdir, open, readFile, realpath, rename, rm, rmdir, symlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import {
   PRIVATE_REPOSITORY,
@@ -32,14 +32,6 @@ async function requireSafeAncestors(root, target) {
   }
 }
 
-function stableJson(value) {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
-  if (value && typeof value === 'object') {
-    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(',')}}`
-  }
-  return JSON.stringify(value)
-}
-
 function lockDocument({ manifest, manifestBytes, bundleBytes }) {
   return {
     schemaVersion: 1,
@@ -68,7 +60,11 @@ async function preflight(target, manifest, lockBytes) {
     throw new Error('the selected release is already installed')
   }
   const vendor = path.join(repository, '.agents/zukan/vendor', manifest.release)
+  const evidence = path.join(repository, '.agents/zukan/evidence', manifest.release)
+  const manifestEvidence = path.join(evidence, 'manifest.json')
+  const bundleEvidence = path.join(evidence, 'sigstore.json')
   if (await exists(vendor)) throw new Error('the selected vendor release path already exists')
+  if (await exists(evidence)) throw new Error('the selected release evidence path already exists')
   const skills = manifest.files
     .map(({ path: relative }) => /^skills\/([^/]+)\/SKILL\.md$/.exec(relative)?.[1])
     .filter(Boolean)
@@ -77,6 +73,8 @@ async function preflight(target, manifest, lockBytes) {
   const targets = [
     lock,
     vendor,
+    manifestEvidence,
+    bundleEvidence,
     path.join(repository, '.agents/zukan/workflow'),
     path.join(repository, '.agents/zukan/bin'),
     ...uniqueSkills.flatMap((skill) => [
@@ -86,11 +84,11 @@ async function preflight(target, manifest, lockBytes) {
   ]
   for (const entry of targets) {
     await requireSafeAncestors(repository, entry)
-    if (entry !== lock && entry !== vendor && await exists(entry)) {
+    if (entry !== lock && entry !== vendor && entry !== manifestEvidence && entry !== bundleEvidence && await exists(entry)) {
       throw new Error(`${path.relative(repository, entry)} already exists; installation will not overwrite it`)
     }
   }
-  return { repository, lock, vendor, skills: uniqueSkills }
+  return { repository, lock, vendor, evidence, manifestEvidence, bundleEvidence, targets, skills: uniqueSkills }
 }
 
 async function removeEmptyParents(paths) {
@@ -99,13 +97,19 @@ async function removeEmptyParents(paths) {
   }
 }
 
-async function commitInstallation(plan, extracted, lockBytes) {
+async function assertAncestorsSafe(plan) {
+  for (const target of plan.targets) await requireSafeAncestors(plan.repository, target)
+}
+
+async function commitInstallation(plan, extracted, manifestBytes, bundleBytes, lockBytes) {
   const created = []
   const parentCandidates = [
     path.join(plan.repository, '.claude/skills'),
     path.join(plan.repository, '.claude'),
     path.join(plan.repository, '.agents/skills'),
     path.join(plan.repository, '.agents/zukan/vendor'),
+    plan.evidence,
+    path.dirname(plan.evidence),
     path.join(plan.repository, '.agents/zukan'),
     path.join(plan.repository, '.agents'),
   ]
@@ -115,8 +119,10 @@ async function commitInstallation(plan, extracted, lockBytes) {
   }
   const stage = path.join(plan.repository, '.agents/zukan', `.stage-${randomUUID()}`)
   try {
+    await assertAncestorsSafe(plan)
     await mkdir(path.dirname(stage), { recursive: true })
     await cp(extracted, stage, { recursive: true, errorOnExist: true, force: false })
+    await assertAncestorsSafe(plan)
     await mkdir(path.dirname(plan.vendor), { recursive: true })
     await rename(stage, plan.vendor)
     created.push(plan.vendor)
@@ -130,16 +136,26 @@ async function commitInstallation(plan, extracted, lockBytes) {
       ]),
     ]
     for (const [target, source] of links) {
+      await assertAncestorsSafe(plan)
       await mkdir(path.dirname(target), { recursive: true })
       await symlink(path.relative(path.dirname(target), source), target, 'dir')
       created.push(target)
     }
     const agents = path.join(plan.repository, 'AGENTS.md')
     if (!await exists(agents)) {
+      await assertAncestorsSafe(plan)
       const template = new URL('../templates/AGENTS.md', import.meta.url)
       await cp(template, agents, { errorOnExist: true, force: false })
       created.push(agents)
     }
+    await assertAncestorsSafe(plan)
+    await mkdir(plan.evidence, { recursive: true })
+    await writeFile(plan.manifestEvidence, manifestBytes, { flag: 'wx' })
+    created.push(plan.manifestEvidence)
+    await assertAncestorsSafe(plan)
+    await writeFile(plan.bundleEvidence, bundleBytes, { flag: 'wx' })
+    created.push(plan.bundleEvidence)
+    await assertAncestorsSafe(plan)
     await writeFile(plan.lock, lockBytes, { flag: 'wx' })
     created.push(plan.lock)
   } catch (error) {
@@ -147,6 +163,30 @@ async function commitInstallation(plan, extracted, lockBytes) {
     for (const entry of created.reverse()) await rm(entry, { force: true, recursive: true })
     await removeEmptyParents(createdParents)
     throw error
+  }
+}
+
+async function acquireInstallationLock(target) {
+  const repository = await realpath(target)
+  const lockPath = path.join(repository, '.zukan-agent-install.lock')
+  let handle
+  try {
+    handle = await open(lockPath, 'wx', 0o600)
+  } catch (error) {
+    if (error.code === 'EEXIST') throw new Error('another Zukan agent installation is in progress (repository mutation lock exists)')
+    throw error
+  }
+  const identity = await handle.stat()
+  return {
+    async release() {
+      await handle.close()
+      try {
+        const current = await lstat(lockPath)
+        if (current.dev === identity.dev && current.ino === identity.ino) await rm(lockPath)
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error
+      }
+    },
   }
 }
 
@@ -173,13 +213,19 @@ export async function installRelease({ target, requestedRelease, github, verifyS
     certificateIdentityURI: producer.identity,
   })
   const extracted = await extractVerifiedArchive(archive, manifest)
+  let mutex
   try {
+    mutex = await acquireInstallationLock(target)
     const lock = lockDocument({ manifest, manifestBytes, bundleBytes })
     const lockBytes = Buffer.from(`${JSON.stringify(lock, null, 2)}\n`)
     const plan = await preflight(target, manifest, lockBytes)
-    await commitInstallation(plan, extracted.root, lockBytes)
+    await commitInstallation(plan, extracted.root, manifestBytes, bundleBytes, lockBytes)
     return { status: 'installed', release: manifest.release, revision: manifest.revision }
   } finally {
-    await extracted.cleanup()
+    try {
+      if (mutex) await mutex.release()
+    } finally {
+      await extracted.cleanup()
+    }
   }
 }

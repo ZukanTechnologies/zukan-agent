@@ -23,15 +23,17 @@ function parse(arguments_) {
 export async function runCli(arguments_, dependencies = {}) {
   const selection = parse(arguments_)
   const target = (dependencies.cwd ?? process.cwd)()
+  const github = dependencies.github ?? createGitHubClient()
+  const verifySigstore = dependencies.verifySigstore ?? verifySigstoreRelease
   if (selection.command === 'doctor') {
-    const result = await (dependencies.doctor ?? doctorRelease)({ target })
+    const result = await (dependencies.doctor ?? doctorRelease)({ target, github, verifySigstore })
     return `Zukan agent workflows are healthy at ${result.release} (${result.revision.slice(0, 12)}).`
   }
   const result = await (dependencies.install ?? installRelease)({
     target,
     requestedRelease: selection.release,
-    github: dependencies.github ?? createGitHubClient(),
-    verifySigstore: dependencies.verifySigstore ?? verifySigstoreRelease,
+    github,
+    verifySigstore,
   })
   return `Installed ${result.release} (${result.revision.slice(0, 12)}). Run npx @zukantech/agent doctor to verify the pin.`
 }

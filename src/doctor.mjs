@@ -1,6 +1,15 @@
 import { lstat, readFile, readdir, readlink, realpath } from 'node:fs/promises'
 import path from 'node:path'
-import { PRIVATE_REPOSITORY, exactKeys, expectedProducer, parseJson, pathIsUnsafe, sha256, validateReleaseName } from './contracts.mjs'
+import {
+  PRIVATE_REPOSITORY,
+  exactKeys,
+  expectedProducer,
+  parseJson,
+  pathIsUnsafe,
+  sha256,
+  validateManifest,
+  validateReleaseName,
+} from './contracts.mjs'
 
 async function requireSymlink(target, source, repository) {
   let metadata
@@ -56,13 +65,39 @@ function validateLock(lock) {
   return lock
 }
 
-export async function doctorRelease({ target }) {
+export async function doctorRelease({ target, github, verifySigstore }) {
+  if (!github || typeof verifySigstore !== 'function') throw new Error('doctor verification dependencies are unavailable')
+  await github.authorize(PRIVATE_REPOSITORY)
   const repository = await realpath(target)
   const lockPath = path.join(repository, '.agents/zukan/release-lock.json')
   let lock
   try { lock = validateLock(parseJson(await readFile(lockPath), 'release lock')) } catch (error) {
     if (error.code === 'ENOENT') throw new Error('no Zukan release lock is installed')
     throw error
+  }
+  const evidence = path.join(repository, '.agents/zukan/evidence', lock.release)
+  const manifestBytes = await readFile(path.join(evidence, 'manifest.json'))
+  const bundleBytes = await readFile(path.join(evidence, 'sigstore.json'))
+  if (sha256(manifestBytes) !== lock.manifestSha256 || sha256(bundleBytes) !== lock.signatureBundleSha256) {
+    throw new Error('installed release evidence digest has drifted')
+  }
+  const manifest = validateManifest(parseJson(manifestBytes, 'release manifest'), lock.release)
+  const bundle = parseJson(bundleBytes, 'Sigstore bundle')
+  if (manifest.revision !== lock.revision
+    || manifest.archive.sha256 !== lock.archiveSha256
+    || JSON.stringify(manifest.producer) !== JSON.stringify(lock.producer)
+    || JSON.stringify(manifest.files) !== JSON.stringify(lock.files)) {
+    throw new Error('release lock does not match signed release evidence')
+  }
+  const producer = expectedProducer(lock.release)
+  await verifySigstore({
+    bundle,
+    artifact: manifestBytes,
+    certificateIssuer: producer.issuer,
+    certificateIdentityURI: producer.identity,
+  })
+  if (await github.resolveTag(PRIVATE_REPOSITORY, lock.release) !== lock.revision) {
+    throw new Error('current GitHub release tag does not match the installed revision')
   }
   const vendor = path.join(repository, '.agents/zukan/vendor', lock.release)
   const actual = await inventory(vendor)

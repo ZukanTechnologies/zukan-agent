@@ -52,6 +52,14 @@ test('an authorized install verifies immutable evidence before materializing one
   assert.equal(lock.revision, release.revision)
   assert.equal(lock.archiveSha256, sha256(release.archive))
   assert.equal(
+    await readFile(path.join(target, `.agents/zukan/evidence/${release.release}/manifest.json`), 'utf8'),
+    release.manifestBytes.toString('utf8'),
+  )
+  assert.equal(
+    await readFile(path.join(target, `.agents/zukan/evidence/${release.release}/sigstore.json`), 'utf8'),
+    '{"fixture":"sigstore-bundle"}\n',
+  )
+  assert.equal(
     await readFile(path.join(target, `.agents/zukan/vendor/${release.release}/skills/zukan-flow/SKILL.md`), 'utf8'),
     release.files['skills/zukan-flow/SKILL.md'],
   )
@@ -167,4 +175,20 @@ test('a late filesystem failure rolls back every installer-created path', async 
   assert.equal((await lstat(claude)).isDirectory(), true)
   await assert.rejects(lstat(path.join(target, '.agents')), { code: 'ENOENT' })
   await assert.rejects(lstat(path.join(target, 'AGENTS.md')), { code: 'ENOENT' })
+})
+
+test('an existing repository mutation lock blocks concurrent installation without writes', async (t) => {
+  const target = await targetFixture(t)
+  await writeFile(path.join(target, '.zukan-agent-install.lock'), 'other installer\n')
+  const release = await createFixtureRelease(t)
+  await assert.rejects(
+    installRelease({
+      target,
+      requestedRelease: release.release,
+      github: release.github({ authorized: true }),
+      verifySigstore: release.verifier(),
+    }),
+    /installation.*in progress|lock/i,
+  )
+  assert.deepEqual((await readdir(target)).sort(), ['.git', '.zukan-agent-install.lock'])
 })

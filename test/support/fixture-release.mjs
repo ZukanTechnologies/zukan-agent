@@ -79,12 +79,15 @@ export async function createFixtureRelease(t, options = {}) {
       }
     },
     verifier({ events = [] } = {}) {
-      return async ({ certificateIssuer, certificateIdentityURI }) => {
+      return async ({ bundle, artifact, certificateIssuer, certificateIdentityURI }) => {
         events.push('verify-signature')
         if (fault.signatureValid === false) throw new Error('release signature verification failed')
         const expected = expectedProducer(release)
         if (certificateIssuer !== expected.issuer || certificateIdentityURI !== expected.identity) {
           throw new Error('release producer identity verification failed')
+        }
+        if (!Buffer.from(artifact).equals(manifestBytes) || JSON.stringify(bundle) !== JSON.stringify(JSON.parse(bundleBytes))) {
+          throw new Error('release signature verification failed')
         }
       }
     },

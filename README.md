@@ -33,6 +33,11 @@ After installation, run:
 npx @zukantech/agent doctor
 ```
 
+`doctor` is an online admission check: it re-proves private GitHub access,
+re-verifies the persisted signed manifest and Sigstore bundle, confirms the tag
+still resolves to the pinned revision, and checks the installed inventory and
+harness links for drift.
+
 The public npm package contains generic bootstrap logic only—no Zukan skills,
 marketplace payload, credentials, or protected release material.
 
@@ -50,3 +55,9 @@ Authorization, evidence, preflight, or mutation failures return a concise
 actionable error and do not print raw `gh` output. Any paths created during a
 failed mutation are rolled back; pre-existing policy and harness files remain
 byte-identical.
+
+An exclusive repository lock serializes cooperating installers, and destination
+ancestors are revalidated throughout mutation. As with Git and npm themselves,
+the bootstrap assumes the local repository and OS account are trusted; it does
+not claim to defend against a malicious concurrent process already running as
+the same user with permission to rewrite the repository.

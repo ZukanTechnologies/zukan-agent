@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { hostname, tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 import { installRelease } from '../src/install.mjs'
@@ -179,7 +179,15 @@ test('a late filesystem failure rolls back every installer-created path', async 
 
 test('an existing repository mutation lock blocks concurrent installation without writes', async (t) => {
   const target = await targetFixture(t)
-  await writeFile(path.join(target, '.zukan-agent-install.lock'), 'other installer\n')
+  await writeFile(path.join(target, '.zukan-agent-install.lock'), `${JSON.stringify({
+    schemaVersion: 1,
+    kind: 'zukan-agent-install-lock',
+    hostname: hostname(),
+    bootEpochMinute: null,
+    pid: process.pid,
+    startedAt: new Date().toISOString(),
+    nonce: 'a'.repeat(36),
+  })}\n`)
   const release = await createFixtureRelease(t)
   await assert.rejects(
     installRelease({
@@ -191,4 +199,65 @@ test('an existing repository mutation lock blocks concurrent installation withou
     /installation.*in progress|lock/i,
   )
   assert.deepEqual((await readdir(target)).sort(), ['.git', '.zukan-agent-install.lock'])
+})
+
+test('a lock left by a dead process is recovered and does not strand installation', async (t) => {
+  const target = await targetFixture(t)
+  await writeFile(path.join(target, '.zukan-agent-install.lock'), `${JSON.stringify({
+    schemaVersion: 1,
+    kind: 'zukan-agent-install-lock',
+    hostname: hostname(),
+    bootEpochMinute: null,
+    pid: 2_147_483_647,
+    startedAt: new Date(Date.now() - 60_000).toISOString(),
+    nonce: 'b'.repeat(36),
+  })}\n`)
+  const release = await createFixtureRelease(t)
+
+  await installRelease({
+    target,
+    requestedRelease: release.release,
+    github: release.github({ authorized: true }),
+    verifySigstore: release.verifier(),
+  })
+
+  await assert.rejects(lstat(path.join(target, '.zukan-agent-install.lock')), { code: 'ENOENT' })
+  assert.equal((await lstat(path.join(target, '.agents/zukan/release-lock.json'))).isFile(), true)
+})
+
+test('a malformed mutation lock fails safely with explicit recovery guidance', async (t) => {
+  const target = await targetFixture(t)
+  await writeFile(path.join(target, '.zukan-agent-install.lock'), 'not trusted metadata\n')
+  const release = await createFixtureRelease(t)
+  await assert.rejects(
+    installRelease({
+      target,
+      requestedRelease: release.release,
+      github: release.github({ authorized: true }),
+      verifySigstore: release.verifier(),
+    }),
+    /inspect.*remove|stale.*lock/i,
+  )
+  assert.deepEqual((await readdir(target)).sort(), ['.git', '.zukan-agent-install.lock'])
+})
+
+test('an unverifiable old lock is recovered even if its PID has been reused', async (t) => {
+  const target = await targetFixture(t)
+  await writeFile(path.join(target, '.zukan-agent-install.lock'), `${JSON.stringify({
+    schemaVersion: 1,
+    kind: 'zukan-agent-install-lock',
+    hostname: hostname(),
+    bootEpochMinute: null,
+    pid: process.pid,
+    startedAt: new Date(Date.now() - 31 * 60_000).toISOString(),
+    nonce: 'c'.repeat(36),
+  })}\n`)
+  const release = await createFixtureRelease(t)
+  await installRelease({
+    target,
+    requestedRelease: release.release,
+    github: release.github({ authorized: true }),
+    verifySigstore: release.verifier(),
+  })
+  await assert.rejects(lstat(path.join(target, '.zukan-agent-install.lock')), { code: 'ENOENT' })
 })

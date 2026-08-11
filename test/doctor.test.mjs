@@ -79,3 +79,26 @@ test('doctor rejects a coherent local lock and payload forgery without a valid p
 
   await assert.rejects(doctorRelease(fixture), /signature|producer/i)
 })
+
+test('doctor preserves an optional signed capability binding while proving the base release', async (t) => {
+  const fixture = await installedFixture(t)
+  const lockPath = path.join(fixture.target, '.agents/zukan/release-lock.json')
+  const lock = JSON.parse(await readFile(lockPath))
+  lock.capabilityAdmission = {
+    contractSha256: '1'.repeat(64),
+    integrationDeclarationSha256: {
+      'claude-code': '2'.repeat(64),
+      codex: '3'.repeat(64),
+      opencode: '4'.repeat(64),
+    },
+    repository: 'ZukanTechnologies/zukan',
+    repositoryPolicySha256: '5'.repeat(64),
+  }
+  lock.capabilityAdmissionAttestation = {
+    scheme: 'ed25519',
+    keyId: 'zukan-policy-v1',
+    signature: 'YQ==',
+  }
+  await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`)
+  assert.equal((await doctorRelease(fixture)).status, 'healthy')
+})

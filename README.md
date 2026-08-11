@@ -17,7 +17,8 @@ as authorization.
 
 Use `--release <tag>` for a deliberate immutable pin. The installer verifies the
 expected private producer, keyless Sigstore bundle, GitHub tag target, revision,
-archive digest, and every payload file before it changes the repository. It never
+exact Claude Code, Codex, and OpenCode certification receipt, archive digest,
+and every payload file before it changes the repository. It never
 overwrites existing agent policy or harness configuration. Installation and
 updates remain local by default: they do not create a branch, commit, push, or
 pull request.
@@ -83,9 +84,9 @@ npx @zukantech/agent doctor
 ```
 
 `doctor` is an online admission check: it re-proves private GitHub access,
-re-verifies the persisted signed manifest and Sigstore bundle, confirms the tag
-still resolves to the pinned revision, and checks the installed inventory and
-harness links for drift.
+re-verifies the persisted signed manifest, Sigstore bundle, and stable-release
+certification evidence, confirms the tag still resolves to the pinned revision,
+and checks the installed inventory and harness links for drift.
 
 ## Signed capability admission
 
@@ -142,7 +143,8 @@ marketplace payload, credentials, or protected release material.
 The installer authorizes before downloading protected assets, then verifies the
 release manifest's approved repository and GitHub Actions workflow identity,
 its keyless Sigstore bundle and transparency evidence, the GitHub tag's peeled
-commit, archive digest, exact file inventory, and every file digest. Archive
+commit, signed certification digest and exact harness results, archive digest,
+exact file inventory, and every file digest. Archive
 paths, links, special files, expansion size, and unexpected files are rejected.
 Only then is the payload staged under the harness-neutral `.agents` authority
 and linked into the shared skills discovery surface plus Claude Code's adapter.

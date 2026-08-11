@@ -10,11 +10,11 @@ import { sha256 } from '../src/contracts.mjs'
 import { installRelease } from '../src/install.mjs'
 import { createFixtureRelease } from './support/fixture-release.mjs'
 
-async function installedFixture(t) {
+async function installedFixture(t, releaseOptions = {}) {
   const target = await mkdtemp(path.join(tmpdir(), 'zukan-agent-doctor-'))
   t.after(() => rm(target, { force: true, recursive: true }))
   await mkdir(path.join(target, '.git'))
-  const release = await createFixtureRelease(t)
+  const release = await createFixtureRelease(t, releaseOptions)
   await installRelease({
     target,
     requestedRelease: release.release,
@@ -23,6 +23,20 @@ async function installedFixture(t) {
   })
   return { target, release, github: release.github({ authorized: true }), verifySigstore: release.verifier() }
 }
+
+test('doctor revalidates stable certification evidence without rewriting it', async (t) => {
+  const fixture = await installedFixture(t, {
+    release: 'v1.1.0',
+    certified: true,
+    prerelease: false,
+  })
+  assert.equal((await doctorRelease(fixture)).status, 'healthy')
+  await appendFile(
+    path.join(fixture.target, '.agents/zukan/evidence/v1.1.0/certification.json'),
+    'drift\n',
+  )
+  await assert.rejects(doctorRelease(fixture), /certification.*drift|evidence.*drift/i)
+})
 
 test('doctor proves the installed lock, payload digests, inventory, and harness links', async (t) => {
   const { target, release, github, verifySigstore } = await installedFixture(t)

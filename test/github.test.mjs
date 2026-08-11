@@ -32,6 +32,7 @@ test('authorization errors are actionable and never echo CLI output or credentia
 
 test('release resolution, exact asset download, and annotated-tag peeling use GitHub APIs', async () => {
   const calls = []
+  const bundleAssetId = Object.values(RELEASE_ASSETS).indexOf(RELEASE_ASSETS.bundle) + 1
   const runner = async (args) => {
     calls.push(args)
     const endpoint = args.find((argument) => argument.startsWith('/repos/'))
@@ -41,7 +42,7 @@ test('release resolution, exact asset download, and annotated-tag peeling use Gi
         assets: Object.values(RELEASE_ASSETS).map((name, index) => ({ id: index + 1, name })),
       }))
     }
-    if (endpoint.endsWith('/releases/assets/2')) return Buffer.from('bundle bytes')
+    if (endpoint.endsWith(`/releases/assets/${bundleAssetId}`)) return Buffer.from('bundle bytes')
     if (endpoint.endsWith('/git/ref/tags/v1.2.3')) return Buffer.from(JSON.stringify({ object: { type: 'tag', sha: 'a'.repeat(40) } }))
     if (endpoint.endsWith(`/git/tags/${'a'.repeat(40)}`)) return Buffer.from(JSON.stringify({ object: { type: 'commit', sha: 'b'.repeat(40) } }))
     throw new Error(`unexpected ${endpoint}`)

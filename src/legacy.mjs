@@ -161,7 +161,7 @@ async function replaceLink(target, source) {
 }
 
 export async function commitLegacyMigration({ repository, legacy, verified, fault }) {
-  const { manifest, manifestBytes, bundleBytes, lockBytes, extracted } = verified
+  const { manifest, manifestBytes, bundleBytes, certificationBytes, lockBytes, extracted } = verified
   const newVendor = path.join(repository, '.agents/zukan/vendor', manifest.release)
   const evidence = path.join(repository, '.agents/zukan/evidence', manifest.release)
   const bin = path.join(repository, '.agents/zukan/bin')
@@ -205,6 +205,9 @@ export async function commitLegacyMigration({ repository, legacy, verified, faul
     await mkdir(evidence, { recursive: true })
     await writeFile(path.join(evidence, 'manifest.json'), manifestBytes, { flag: 'wx' })
     await writeFile(path.join(evidence, 'sigstore.json'), bundleBytes, { flag: 'wx' })
+    if (certificationBytes) {
+      await writeFile(path.join(evidence, 'certification.json'), certificationBytes, { flag: 'wx' })
+    }
 
     for (const [target, source] of newSkillLinks) {
       await replaceLink(target, source)

@@ -81,6 +81,124 @@ test('an authorized install verifies immutable evidence before materializing one
   )
 })
 
+test('a stable install verifies and preserves signed harness certification evidence', async (t) => {
+  const target = await targetFixture(t)
+  const release = await createFixtureRelease(t, {
+    release: 'v1.1.0',
+    certified: true,
+    prerelease: false,
+  })
+  const events = []
+
+  await installRelease({
+    target,
+    github: release.github({ events, authorized: true }),
+    verifySigstore: release.verifier({ events }),
+  })
+
+  assert.deepEqual(events.slice(0, 8), [
+    'authorize',
+    'resolve-release',
+    'download-manifest',
+    'download-bundle',
+    'download-archive',
+    'download-certification',
+    'resolve-tag',
+    'verify-signature',
+  ])
+  assert.deepEqual(
+    await readFile(path.join(target, '.agents/zukan/evidence/v1.1.0/certification.json')),
+    release.certificationBytes,
+  )
+  const lock = JSON.parse(await readFile(path.join(target, '.agents/zukan/release-lock.json'), 'utf8'))
+  assert.equal(lock.certificationSha256, sha256(release.certificationBytes))
+
+  const rejectedTarget = await targetFixture(t)
+  const tampered = await createFixtureRelease(t, {
+    release: 'v1.1.0',
+    certified: true,
+    prerelease: false,
+    fault: { certificationBytes: Buffer.from('{"tampered":true}\n') },
+  })
+  await assert.rejects(
+    installRelease({
+      target: rejectedTarget,
+      github: tampered.github({ authorized: true }),
+      verifySigstore: tampered.verifier(),
+    }),
+    /certification/i,
+  )
+  assert.deepEqual(await readdir(rejectedTarget), ['.git'])
+})
+
+test('a stable release must use the certified manifest schema and bind its contract bytes', async (t) => {
+  const uncertifiedTarget = await targetFixture(t)
+  const uncertified = await createFixtureRelease(t, {
+    release: 'v1.1.0',
+    prerelease: false,
+  })
+  await assert.rejects(
+    installRelease({
+      target: uncertifiedTarget,
+      github: uncertified.github({ authorized: true }),
+      verifySigstore: uncertified.verifier(),
+    }),
+    /stable.*certification|certified.*schema/i,
+  )
+  assert.deepEqual(await readdir(uncertifiedTarget), ['.git'])
+
+  const mislabeledTarget = await targetFixture(t)
+  const mislabeled = await createFixtureRelease(t, {
+    release: 'v1.1.0',
+    prerelease: true,
+  })
+  await assert.rejects(
+    installRelease({
+      target: mislabeledTarget,
+      requestedRelease: 'v1.1.0',
+      github: mislabeled.github({ authorized: true }),
+      verifySigstore: mislabeled.verifier(),
+    }),
+    /stable.*certification|certified.*schema/i,
+  )
+  assert.deepEqual(await readdir(mislabeledTarget), ['.git'])
+
+  const driftedTarget = await targetFixture(t)
+  const drifted = await createFixtureRelease(t, {
+    release: 'v1.1.0',
+    certified: true,
+    prerelease: false,
+    fault: { certificationContractDigest: 'd'.repeat(64) },
+  })
+  await assert.rejects(
+    installRelease({
+      target: driftedTarget,
+      github: drifted.github({ authorized: true }),
+      verifySigstore: drifted.verifier(),
+    }),
+    /certification contract.*digest|contract.*inventory/i,
+  )
+  assert.deepEqual(await readdir(driftedTarget), ['.git'])
+})
+
+test('default release selection rejects prerelease tags even when metadata says stable', async (t) => {
+  const target = await targetFixture(t)
+  const mislabeled = await createFixtureRelease(t, {
+    release: 'v1.1.0-rc.1',
+    prerelease: false,
+  })
+
+  await assert.rejects(
+    installRelease({
+      target,
+      github: mislabeled.github({ authorized: true }),
+      verifySigstore: mislabeled.verifier(),
+    }),
+    /not an approved stable release/i,
+  )
+  assert.deepEqual(await readdir(target), ['.git'])
+})
+
 test('authorization denial returns no protected content and leaves the target untouched', async (t) => {
   const target = await targetFixture(t)
   const before = await readdir(target)

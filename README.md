@@ -29,11 +29,13 @@ Install does not silently float after that point.
 
 ## Deliberate updates and publication
 
-`install`, `update`, and `doctor` perform a bounded, best-effort stable-release
-check cached for 24 hours. A healthy older pin stays ready; the CLI reports the
-installed and available versions plus an exact local update command. A network
-or cache failure suppresses only the advisory notice and never invalidates a
-verified pin.
+`doctor` and operations selecting an explicit release perform a bounded,
+best-effort stable-release check cached for 24 hours. Default install and update
+already resolve the latest stable release exactly once and do not repeat that
+lookup. A healthy older pin stays ready; the CLI reports the installed and
+available versions plus an exact local update command. A network or cache
+failure suppresses only the advisory notice and never invalidates a verified
+pin.
 
 ```sh
 # Resolve and verify the latest approved stable release, keeping changes local

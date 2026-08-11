@@ -59,21 +59,25 @@ async function fixture(t) {
   const capabilityAdmission = {
     contractSha256: sha256(contract),
     integrationDeclarationSha256,
+    releaseManifestSha256: baseLock.manifestSha256,
     repository: 'ZukanTechnologies/zukan',
     repositoryPolicySha256: sha256(policy),
   }
   const { privateKey, publicKey } = generateKeyPairSync('ed25519')
-  const attestation = {
+  const signedEnvelope = {
     schemaVersion: 1,
     kind: 'zukan-capability-admission',
     repository: 'ZukanTechnologies/zukan',
     release,
     revision,
     capabilityAdmission,
+  }
+  const attestation = {
+    ...signedEnvelope,
     capabilityAdmissionAttestation: {
       scheme: 'ed25519',
       keyId: 'zukan-policy-v1',
-      signature: sign(null, Buffer.from(stableJson(capabilityAdmission)), privateKey).toString('base64'),
+      signature: sign(null, Buffer.from(stableJson(signedEnvelope)), privateKey).toString('base64'),
     },
   }
   const attestationFile = path.join(target, 'attestation.json')
@@ -109,6 +113,26 @@ test('binds only an organization-signed policy for the exact repository and inst
     repositoryIdentity: async () => 'ZukanTechnologies/zukan',
     trustedPolicyPublicKey: forged.publicKey.export({ type: 'spki', format: 'der' }),
   }), /signature|digest/i)
+
+  const relabelled = await fixture(t)
+  const relabelledAttestation = JSON.parse(await readFile(relabelled.attestationFile))
+  relabelledAttestation.release = 'v0.1.0-alpha.relabelled'
+  relabelledAttestation.revision = 'f'.repeat(40)
+  relabelledAttestation.capabilityAdmission.releaseManifestSha256 = '9'.repeat(64)
+  await writeFile(relabelled.attestationFile, `${JSON.stringify(relabelledAttestation)}\n`)
+  const relabelledLockFile = path.join(relabelled.target, '.agents/zukan/release-lock.json')
+  const relabelledLock = JSON.parse(await readFile(relabelledLockFile))
+  relabelledLock.release = relabelledAttestation.release
+  relabelledLock.revision = relabelledAttestation.revision
+  relabelledLock.manifestSha256 = relabelledAttestation.capabilityAdmission.releaseManifestSha256
+  await writeFile(relabelledLockFile, `${JSON.stringify(relabelledLock)}\n`)
+  await assert.rejects(bindCapabilityPolicy({
+    target: relabelled.target,
+    policyFile: relabelled.policyFile,
+    attestationFile: relabelled.attestationFile,
+    repositoryIdentity: async () => 'ZukanTechnologies/zukan',
+    trustedPolicyPublicKey: relabelled.publicKey.export({ type: 'spki', format: 'der' }),
+  }), /signature/i)
 })
 
 test('runs the verified installed evaluator with fixed policy and lock paths', async (t) => {

@@ -1,5 +1,6 @@
 import { lstat, readFile, readdir, readlink, realpath } from 'node:fs/promises'
 import path from 'node:path'
+import { verifyCapabilityAdmissionSignature } from './admission.mjs'
 import {
   PRIVATE_REPOSITORY,
   exactKeys,
@@ -72,13 +73,14 @@ function validateLock(lock) {
   }
   if (hasAdmission) {
     exactKeys(lock.capabilityAdmission, [
-      'contractSha256', 'integrationDeclarationSha256', 'repository', 'repositoryPolicySha256',
+      'contractSha256', 'integrationDeclarationSha256', 'releaseManifestSha256', 'repository', 'repositoryPolicySha256',
     ], 'release lock capability admission')
     exactKeys(lock.capabilityAdmission.integrationDeclarationSha256, [
       'claude-code', 'codex', 'opencode',
     ], 'release lock integration declaration digests')
     for (const digest of [
       lock.capabilityAdmission.contractSha256,
+      lock.capabilityAdmission.releaseManifestSha256,
       lock.capabilityAdmission.repositoryPolicySha256,
       ...Object.values(lock.capabilityAdmission.integrationDeclarationSha256),
     ]) {
@@ -89,6 +91,9 @@ function validateLock(lock) {
     if (typeof lock.capabilityAdmission.repository !== 'string'
       || !/^ZukanTechnologies\/[A-Za-z0-9._-]+$/.test(lock.capabilityAdmission.repository)) {
       throw new Error('release lock capability admission repository is invalid')
+    }
+    if (lock.capabilityAdmission.releaseManifestSha256 !== lock.manifestSha256) {
+      throw new Error('release lock capability admission manifest digest is invalid')
     }
     exactKeys(lock.capabilityAdmissionAttestation, ['scheme', 'keyId', 'signature'], 'release lock capability admission signature')
     if (lock.capabilityAdmissionAttestation.scheme !== 'ed25519'
@@ -101,7 +106,7 @@ function validateLock(lock) {
   return lock
 }
 
-export async function doctorRelease({ target, github, verifySigstore }) {
+export async function doctorRelease({ target, github, verifySigstore, trustedPolicyPublicKey }) {
   if (!github || typeof verifySigstore !== 'function') throw new Error('doctor verification dependencies are unavailable')
   await github.authorize(PRIVATE_REPOSITORY)
   const repository = await realpath(target)
@@ -111,6 +116,7 @@ export async function doctorRelease({ target, github, verifySigstore }) {
     if (error.code === 'ENOENT') throw new Error('no Zukan release lock is installed')
     throw error
   }
+  if (lock.capabilityAdmission) verifyCapabilityAdmissionSignature(lock, trustedPolicyPublicKey)
   const evidence = path.join(repository, '.agents/zukan/evidence', lock.release)
   const manifestBytes = await readFile(path.join(evidence, 'manifest.json'))
   const bundleBytes = await readFile(path.join(evidence, 'sigstore.json'))

@@ -1,12 +1,16 @@
 import assert from 'node:assert/strict'
-import { createHash } from 'node:crypto'
+import { createHash, generateKeyPairSync, sign } from 'node:crypto'
 import { lstat, mkdir, mkdtemp, readFile, readdir, readlink, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 import { installRelease } from '../src/install.mjs'
 import { updateRelease } from '../src/update.mjs'
+import { stableJson } from '../src/admission.mjs'
 import { createFixtureRelease } from './support/fixture-release.mjs'
+
+const policySigner = generateKeyPairSync('ed25519')
+const trustedPolicyPublicKey = policySigner.publicKey.export({ type: 'spki', format: 'der' })
 
 async function targetFixture(t) {
   const root = await mkdtemp(path.join(tmpdir(), 'zukan-agent-update-'))
@@ -40,11 +44,21 @@ async function bindFixturePolicy(target) {
     integrationDeclarationSha256: {
       'claude-code': '2'.repeat(64), codex: '3'.repeat(64), opencode: '4'.repeat(64),
     },
+    releaseManifestSha256: lock.manifestSha256,
     repository: 'ZukanTechnologies/zukan',
     repositoryPolicySha256: createHash('sha256').update(policy).digest('hex'),
   }
   lock.capabilityAdmissionAttestation = {
-    scheme: 'ed25519', keyId: 'zukan-policy-v1', signature: 'YQ==',
+    scheme: 'ed25519',
+    keyId: 'zukan-policy-v1',
+    signature: sign(null, Buffer.from(stableJson({
+      schemaVersion: 1,
+      kind: 'zukan-capability-admission',
+      repository: lock.capabilityAdmission.repository,
+      release: lock.release,
+      revision: lock.revision,
+      capabilityAdmission: lock.capabilityAdmission,
+    })), policySigner.privateKey).toString('base64'),
   }
   await writeFile(lockFile, `${JSON.stringify(lock, null, 2)}\n`)
   await writeFile(path.join(target, '.agents/zukan/repository-capabilities.json'), policy)
@@ -127,7 +141,9 @@ test('update verifies and deliberately replaces the authoritative pin and harnes
   const github = releasesGitHub([oldRelease, newRelease], newRelease)
   await installRelease({ target, requestedRelease: oldRelease.release, github, verifySigstore: oldRelease.verifier() })
 
-  const result = await updateRelease({ target, requestedRelease: newRelease.release, github, verifySigstore: async () => {} })
+  const result = await updateRelease({
+    target, requestedRelease: newRelease.release, github, verifySigstore: async () => {}, trustedPolicyPublicKey,
+  })
 
   assert.equal(result.status, 'updated')
   assert.equal(result.release, newRelease.release)
@@ -146,7 +162,9 @@ test('updating a bound release safely removes its release-specific repository po
   await installRelease({ target, requestedRelease: oldRelease.release, github, verifySigstore: oldRelease.verifier() })
   const previous = await bindFixturePolicy(target)
 
-  const result = await updateRelease({ target, requestedRelease: newRelease.release, github, verifySigstore: async () => {} })
+  const result = await updateRelease({
+    target, requestedRelease: newRelease.release, github, verifySigstore: async () => {}, trustedPolicyPublicKey,
+  })
   assert.ok(result.changedPaths.includes('.agents/zukan/repository-capabilities.json'))
   await assert.rejects(lstat(path.join(target, '.agents/zukan/repository-capabilities.json')), { code: 'ENOENT' })
   const lock = JSON.parse(await readFile(path.join(target, '.agents/zukan/release-lock.json')))
@@ -160,6 +178,7 @@ test('updating a bound release safely removes its release-specific repository po
     requestedRelease: newRelease.release,
     github,
     verifySigstore: async () => {},
+    trustedPolicyPublicKey,
     fault: 'after-lock',
   }), /injected update failure/)
   assert.equal((await readFile(path.join(rollbackTarget, '.agents/zukan/release-lock.json'))).equals(previous.lock), true)
@@ -170,6 +189,7 @@ test('updating a bound release safely removes its release-specific repository po
     requestedRelease: newRelease.release,
     github,
     verifySigstore: async () => {},
+    trustedPolicyPublicKey,
     fault: 'after-policy',
   }), /injected update failure/)
   assert.equal((await readFile(path.join(rollbackTarget, '.agents/zukan/release-lock.json'))).equals(previous.lock), true)

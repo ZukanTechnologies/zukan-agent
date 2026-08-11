@@ -51,10 +51,11 @@ npx @zukantech/agent update --release v1.2.3 --pr
 `--pr` is only for publishing the workflow bootstrap or pin change; it is not a
 prerequisite for ordinary application development. It requires a clean checkout
 on the repository's default branch, creates a dedicated branch, force-adds only
-installer-owned paths (even when generic ignore rules cover them), verifies the
-staged path set exactly, then commits, pushes, and opens the pull request. It
-refuses dirty, non-default-branch, out-of-scope, or partial diffs before any
-publication write.
+installer-owned paths (even when generic ignore rules cover them), snapshots the
+complete staged Git tree, and requires the commit produced after local hooks to
+have the identical tree before it pushes or opens the pull request. It refuses
+dirty, non-default-branch, out-of-scope, partial, or hook-modified diffs before
+any publication write.
 
 After installation, run:
 

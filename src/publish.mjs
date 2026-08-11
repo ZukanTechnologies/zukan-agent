@@ -71,10 +71,14 @@ export async function publishChange({ target, operation, runner = defaultRunner 
   await run('git', ['add', '-f', '-A', '--', ...declared], 'bounded change staging')
   const staged = new Set(nulPaths(await run('git', ['diff', '--cached', '--name-only', '-z'], 'staged change inspection')))
   if (!exactSet(staged, actual)) throw new Error('the staged diff does not exactly match the bounded installer change; nothing was committed')
+  const stagedTree = (await run('git', ['write-tree'], 'staged tree snapshot')).toString('utf8').trim()
+  if (!/^[a-f0-9]{40}$/.test(stagedTree)) throw new Error('the staged tree snapshot is invalid; nothing was committed')
 
   const action = result.status === 'installed' ? 'enable' : 'update'
   const title = `chore(agent): ${action} Zukan workflows at ${result.release}`
   await run('git', ['commit', '-m', title], 'workflow change commit')
+  const committedTree = (await run('git', ['rev-parse', 'HEAD^{tree}'], 'committed tree inspection')).toString('utf8').trim()
+  if (committedTree !== stagedTree) throw new Error('a repository hook changed the staged workflow bytes; nothing was pushed')
   const committed = new Set(nulPaths(await run('git', ['diff-tree', '--no-commit-id', '--name-only', '-r', '-z', 'HEAD'], 'committed change inspection')))
   if (!exactSet(committed, actual)) throw new Error('the committed diff does not exactly match the bounded installer change; nothing was pushed')
   if ((await run('git', ['status', '--porcelain=v1', '-z', '--untracked-files=all'], 'post-commit working tree check')).length) {

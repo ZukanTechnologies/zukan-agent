@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { publishChange } from '../src/publish.mjs'
 
-function runnerFixture({ dirty = false, actual = ['.agents/zukan/release-lock.json'], ignored = [], branch = 'main', defaultBranch = 'main', remoteRevision = 'a'.repeat(40) } = {}) {
+function runnerFixture({ dirty = false, actual = ['.agents/zukan/release-lock.json'], ignored = [], branch = 'main', defaultBranch = 'main', remoteRevision = 'a'.repeat(40), committedTree = 'c'.repeat(40) } = {}) {
   const calls = []
   const staged = [...new Set([...actual, ...ignored])]
   const runner = async (command, args) => {
@@ -10,6 +10,8 @@ function runnerFixture({ dirty = false, actual = ['.agents/zukan/release-lock.js
     if (command === 'git' && args[0] === 'status') return Buffer.from(dirty ? ' M application.js\0' : '')
     if (command === 'git' && args[0] === 'symbolic-ref') return Buffer.from(`${branch}\n`)
     if (command === 'gh' && args[0] === 'repo') return Buffer.from(`${defaultBranch}\n`)
+    if (command === 'git' && args[0] === 'write-tree') return Buffer.from(`${'c'.repeat(40)}\n`)
+    if (command === 'git' && args[0] === 'rev-parse' && args[1] === 'HEAD^{tree}') return Buffer.from(`${committedTree}\n`)
     if (command === 'git' && args[0] === 'rev-parse' && args[1] === 'HEAD') return Buffer.from(`${'a'.repeat(40)}\n`)
     if (command === 'git' && args[0] === 'rev-parse') return Buffer.from(`${remoteRevision}\n`)
     if (command === 'git' && args[0] === 'diff-tree') return Buffer.from(`${staged.join('\0')}\0`)
@@ -88,4 +90,16 @@ test('--pr force-adds an installer-owned payload hidden by consumer ignore rules
   })
   const add = fixture.calls.find((call) => call[0] === 'git' && call[1] === 'add')
   assert.deepEqual(add.slice(0, 4), ['git', 'add', '-f', '-A'])
+})
+
+test('--pr refuses to push when a commit hook changes bytes inside an allowed path', async () => {
+  const fixture = runnerFixture({ committedTree: 'd'.repeat(40) })
+  await assert.rejects(
+    publishChange({
+      target: '/consumer', runner: fixture.runner,
+      operation: async () => ({ status: 'updated', release: 'v1.2.4', revision: 'b'.repeat(40), changedPaths: ['.agents/zukan/release-lock.json'] }),
+    }),
+    /hook changed.*bytes|committed tree/i,
+  )
+  assert.equal(fixture.calls.some((call) => call[1] === 'push'), false)
 })

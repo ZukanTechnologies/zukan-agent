@@ -1,0 +1,35 @@
+{
+  "name": "@zukantech/agent",
+  "version": "0.1.0-alpha.1",
+  "description": "GitHub-authorized repository bootstrap for Zukan Technologies agent workflows",
+  "type": "module",
+  "bin": {
+    "zukan-agent": "bin/zukan-agent.mjs"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "templates/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test",
+    "validate": "node scripts/validate-package.mjs"
+  },
+  "engines": {
+    "node": ">=22.9.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ZukanTechnologies/zukan-agent.git"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "sigstore": "4.1.1",
+    "tar": "7.5.22"
+  }
+}

@@ -33,7 +33,7 @@ export async function resolveVerifiedRelease({ requestedRelease, github, verifyS
   await github.authorize(PRIVATE_REPOSITORY)
   const release = await github.resolveRelease(requestedRelease ? validateReleaseName(requestedRelease) : undefined)
   const selectedRelease = validateReleaseName(release.tagName)
-  if (release.draft || (!requestedRelease && release.prerelease)) {
+  if (release.draft || (!requestedRelease && (release.prerelease || !isStableRelease(selectedRelease)))) {
     throw new Error('the resolved release is not an approved stable release')
   }
   const manifestBytes = await github.downloadAsset(release, RELEASE_ASSETS.manifest)

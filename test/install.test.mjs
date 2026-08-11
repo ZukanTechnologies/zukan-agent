@@ -181,6 +181,24 @@ test('a stable release must use the certified manifest schema and bind its contr
   assert.deepEqual(await readdir(driftedTarget), ['.git'])
 })
 
+test('default release selection rejects prerelease tags even when metadata says stable', async (t) => {
+  const target = await targetFixture(t)
+  const mislabeled = await createFixtureRelease(t, {
+    release: 'v1.1.0-rc.1',
+    prerelease: false,
+  })
+
+  await assert.rejects(
+    installRelease({
+      target,
+      github: mislabeled.github({ authorized: true }),
+      verifySigstore: mislabeled.verifier(),
+    }),
+    /not an approved stable release/i,
+  )
+  assert.deepEqual(await readdir(target), ['.git'])
+})
+
 test('authorization denial returns no protected content and leaves the target untouched', async (t) => {
   const target = await targetFixture(t)
   const before = await readdir(target)

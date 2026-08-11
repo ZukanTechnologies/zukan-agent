@@ -6,7 +6,7 @@ import { updateRelease } from './update.mjs'
 import { checkForUpdate } from './updates.mjs'
 import { verifySigstoreRelease } from './verify.mjs'
 
-const usage = 'Usage: zukan-agent <install|update> [--release <tag>] [--pr] | doctor'
+const usage = 'Usage: zukan-agent <install|update> [--release <tag>] [--pr] [--migrate-legacy] | doctor'
 
 function parse(arguments_) {
   const [command, ...rest] = arguments_
@@ -15,12 +15,14 @@ function parse(arguments_) {
     return { command }
   }
   if (command === 'install' || command === 'update') {
-    const selection = { command, publish: false }
+    const selection = { command, publish: false, migrateLegacy: false }
     for (let index = 0; index < rest.length; index += 1) {
       if (rest[index] === '--pr' && !selection.publish) selection.publish = true
+      else if (rest[index] === '--migrate-legacy' && !selection.migrateLegacy) selection.migrateLegacy = true
       else if (rest[index] === '--release' && !selection.release && rest[index + 1]) selection.release = rest[++index]
-      else throw new Error(`${usage}; --release requires exactly one tag and --pr may appear once`)
+      else throw new Error(`${usage}; each option may appear once and --release requires exactly one tag`)
     }
+    if (selection.migrateLegacy && command !== 'update') throw new Error('--migrate-legacy is valid only with update')
     return selection
   }
   throw new Error(`${usage}; unknown command`)
@@ -42,7 +44,7 @@ export async function runCli(arguments_, dependencies = {}) {
     return `Zukan agent workflows are healthy at ${result.release} (${result.revision.slice(0, 12)}).${await updateNotice(result.release)}`
   }
   const operation = () => (selection.command === 'install' ? dependencies.install ?? installRelease : dependencies.update ?? updateRelease)({
-    target, requestedRelease: selection.release, github, verifySigstore,
+    target, requestedRelease: selection.release, migrateLegacy: selection.migrateLegacy, github, verifySigstore,
   })
   const result = selection.publish
     ? await (dependencies.publish ?? publishChange)({ target, operation })

@@ -5,6 +5,7 @@ import { acquireInstallationLock, requireSafeAncestors } from './install.mjs'
 import { doctorRelease } from './doctor.mjs'
 import { parseJson, sha256 } from './contracts.mjs'
 import { resolveVerifiedRelease } from './release.mjs'
+import { commitLegacyMigration, validateLegacyInstallation } from './legacy.mjs'
 
 async function exists(file) {
   try { return await lstat(file) } catch (error) { if (error.code === 'ENOENT') return null; throw error }
@@ -156,16 +157,32 @@ async function commitUpdate({ repository, oldLock, oldLockBytes, verified, fault
   ]
 }
 
-export async function updateRelease({ target, requestedRelease, github, verifySigstore, fault }) {
+export async function updateRelease({ target, requestedRelease, github, verifySigstore, migrateLegacy = false, fault }) {
   const repository = await realpath(target)
   const lockPath = path.join(repository, '.agents/zukan/release-lock.json')
-  let oldLockBytes
-  try { oldLockBytes = await readFile(lockPath) } catch (error) {
+  let lockMetadata
+  try { lockMetadata = await lstat(lockPath) } catch (error) {
     if (error.code === 'ENOENT') throw new Error('no installed release pin exists; run npx @zukantech/agent install first')
     throw error
   }
-  const lockMetadata = await lstat(lockPath)
-  if (!lockMetadata.isFile() || lockMetadata.isSymbolicLink()) throw new Error('the installed release lock is not a regular installer-managed file')
+  if (lockMetadata.isSymbolicLink()) {
+    if (!migrateLegacy) throw new Error('a legacy Zukan release pin requires update --migrate-legacy with an explicit --release')
+    if (!requestedRelease) throw new Error('legacy migration requires an explicit --release')
+    const verified = await resolveVerifiedRelease({ requestedRelease, github, verifySigstore })
+    let mutex
+    try {
+      mutex = await acquireInstallationLock(repository)
+      const legacy = await validateLegacyInstallation(repository)
+      if (verified.manifest.release === legacy.lock.release) throw new Error('legacy migration requires a different signed release')
+      const changedPaths = await commitLegacyMigration({ repository, legacy, verified, fault })
+      return { status: 'updated', release: verified.manifest.release, revision: verified.manifest.revision, changedPaths }
+    } finally {
+      try { if (mutex) await mutex.release() } finally { await verified.extracted.cleanup() }
+    }
+  }
+  if (migrateLegacy) throw new Error('--migrate-legacy requires the recognized legacy installer layout')
+  if (!lockMetadata.isFile()) throw new Error('the installed release lock is not a regular installer-managed file')
+  const oldLockBytes = await readFile(lockPath)
   const oldLock = parseJson(oldLockBytes, 'installed release lock')
   await doctorRelease({ target: repository, github, verifySigstore })
   if (requestedRelease && requestedRelease === oldLock.release) throw new Error('the selected release is already installed')

@@ -72,3 +72,19 @@ test('default stable install resolves latest only inside the installer', async (
   })
   assert.equal(checks, 0)
 })
+
+test('CLI passes legacy migration only through an explicit update flag', async () => {
+  const calls = []
+  const dependencies = {
+    cwd: () => '/consumer',
+    update: async (options) => {
+      calls.push(options)
+      return { status: 'updated', release: 'v0.1.0-alpha.6', revision: 'd'.repeat(40), changedPaths: [] }
+    },
+    checkForUpdate: async () => ({ status: 'current' }),
+  }
+  await assert.rejects(runCli(['install', '--migrate-legacy'], dependencies), /migrate-legacy.*update/i)
+  await runCli(['update', '--release', 'v0.1.0-alpha.6', '--migrate-legacy'], dependencies)
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].migrateLegacy, true)
+})

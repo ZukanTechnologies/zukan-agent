@@ -48,6 +48,24 @@ npx @zukantech/agent update --release v1.2.3
 npx @zukantech/agent update --release v1.2.3 --pr
 ```
 
+Repositories pinned by the pre-marketplace installer use a different,
+symlinked lock layout. Migrate one only through the explicit reviewable path:
+
+```sh
+npx @zukantech/agent update --release v0.1.0-alpha.6 --migrate-legacy
+
+# From a clean, current default branch, publish that exact migration as a PR
+npx @zukantech/agent update --release v0.1.0-alpha.6 --migrate-legacy --pr
+```
+
+Legacy migration first verifies the selected signed release, then proves the
+old lock, complete vendor inventory, digests, and every installer-managed link.
+It preserves repository policy, harness settings, unrelated skills, and the old
+immutable vendor tree. It replaces only the release lock and managed workflow,
+binary, and skill links; any failure restores the legacy layout. The flag is
+rejected for current installations and migration always requires an exact,
+different release.
+
 `--pr` is only for publishing the workflow bootstrap or pin change; it is not a
 prerequisite for ordinary application development. It requires a clean checkout
 on the repository's default branch, creates a dedicated branch, force-adds only
@@ -79,8 +97,11 @@ release manifest's approved repository and GitHub Actions workflow identity,
 its keyless Sigstore bundle and transparency evidence, the GitHub tag's peeled
 commit, archive digest, exact file inventory, and every file digest. Archive
 paths, links, special files, expansion size, and unexpected files are rejected.
-Only then is the payload staged and linked for generic agents plus Claude Code;
-other native harness adapters remain additive pilot work.
+Only then is the payload staged under the harness-neutral `.agents` authority
+and linked into the shared skills discovery surface plus Claude Code's adapter.
+The protected release carries the same canonical skills and declared
+integration contract for Claude Code, Codex, and OpenCode; consumer repository
+policy remains authoritative for readiness and delivery gates.
 
 Authorization, evidence, preflight, or mutation failures return a concise
 actionable error and do not print raw `gh` output. Any paths created during a

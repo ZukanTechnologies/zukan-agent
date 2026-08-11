@@ -16,6 +16,7 @@ function nulPaths(bytes) {
 function installerOwned(relative) {
   return relative === 'AGENTS.md'
     || relative === '.agents/zukan/release-lock.json'
+    || relative === '.agents/zukan/current'
     || relative === '.agents/zukan/workflow'
     || relative === '.agents/zukan/bin'
     || /^\.agents\/zukan\/(?:vendor|evidence)\/[^/]+(?:\/.*)?$/.test(relative)

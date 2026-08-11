@@ -80,11 +80,26 @@ async function commitUpdate({ repository, oldLock, oldLockBytes, verified, fault
   const newVendor = path.join(repository, '.agents/zukan/vendor', manifest.release)
   const evidence = path.join(repository, '.agents/zukan/evidence', manifest.release)
   const lockPath = path.join(repository, '.agents/zukan/release-lock.json')
+  const policyPath = path.join(repository, '.agents/zukan/repository-capabilities.json')
+  let oldPolicyBytes = null
+  if (oldLock.capabilityAdmission) {
+    const policyMetadata = await lstat(policyPath)
+    if (!policyMetadata.isFile() || policyMetadata.isSymbolicLink()) {
+      throw new Error('the bound repository capability policy has an unsafe file type')
+    }
+    oldPolicyBytes = await readFile(policyPath)
+    if (sha256(oldPolicyBytes) !== oldLock.capabilityAdmission.repositoryPolicySha256) {
+      throw new Error('the bound repository capability policy digest has drifted')
+    }
+  }
   const oldSkills = skills(oldLock)
   const newSkills = skills(verified.lock)
   const oldLinks = new Map(links(repository, oldVendor, oldSkills))
   const newLinks = new Map(links(repository, newVendor, newSkills))
-  const mutationTargets = [newVendor, evidence, lockPath, ...oldLinks.keys(), ...newLinks.keys()]
+  const mutationTargets = [
+    newVendor, evidence, lockPath, ...(oldPolicyBytes ? [policyPath] : []),
+    ...oldLinks.keys(), ...newLinks.keys(),
+  ]
   for (const target of mutationTargets) await requireSafeAncestors(repository, target)
   for (const [target, source] of oldLinks) await requireManagedLink(target, source)
   for (const target of newLinks.keys()) {
@@ -101,6 +116,7 @@ async function commitUpdate({ repository, oldLock, oldLockBytes, verified, fault
   let lockReplaced = false
   let temporaryLock
   let materializationCreated = false
+  let policyRemoved = false
   try {
     if (!reuseMaterialization) {
       await cp(extracted.root, stage, { recursive: true, errorOnExist: true, force: false })
@@ -128,6 +144,12 @@ async function commitUpdate({ repository, oldLock, oldLockBytes, verified, fault
     await writeFile(temporaryLock, lockBytes, { flag: 'wx' })
     await rename(temporaryLock, lockPath)
     lockReplaced = true
+    if (fault === 'after-lock') throw new Error('injected update failure after-lock')
+    if (oldPolicyBytes) {
+      await rm(policyPath)
+      policyRemoved = true
+    }
+    if (fault === 'after-policy') throw new Error('injected update failure after-policy')
   } catch (error) {
     await rm(stage, { force: true, recursive: true })
     if (temporaryLock) await rm(temporaryLock, { force: true })
@@ -135,6 +157,7 @@ async function commitUpdate({ repository, oldLock, oldLockBytes, verified, fault
       await rm(target, { force: true, recursive: true })
       if (oldLinks.has(target)) await replaceLink(target, oldLinks.get(target))
     }
+    if (policyRemoved) await writeFile(policyPath, oldPolicyBytes, { flag: 'wx' })
     if (lockReplaced || !(await readFile(lockPath)).equals(oldLockBytes)) {
       const restore = path.join(path.dirname(lockPath), `.release-lock-restore-${randomUUID()}`)
       await writeFile(restore, oldLockBytes, { flag: 'wx' })
@@ -150,6 +173,7 @@ async function commitUpdate({ repository, oldLock, oldLockBytes, verified, fault
   const touchedSkills = [...new Set([...oldSkills, ...newSkills])]
   return [
     '.agents/zukan/release-lock.json',
+    ...(oldPolicyBytes ? ['.agents/zukan/repository-capabilities.json'] : []),
     ...(!reuseMaterialization ? [`.agents/zukan/vendor/${manifest.release}`, `.agents/zukan/evidence/${manifest.release}`] : []),
     '.agents/zukan/workflow',
     '.agents/zukan/bin',

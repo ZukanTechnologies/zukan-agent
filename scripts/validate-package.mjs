@@ -29,7 +29,7 @@ try {
     || ['bin/', 'src/', 'templates/'].some((prefix) => relative.startsWith(prefix))
   const forbidden = files.filter((relative) => !allowed(relative))
   if (forbidden.length) throw new Error(`public package contains forbidden paths: ${forbidden.join(', ')}`)
-  for (const required of ['bin/zukan-agent.mjs', 'src/install.mjs', 'src/verify.mjs', 'templates/AGENTS.md']) {
+  for (const required of ['bin/zukan-agent.mjs', 'src/admission.mjs', 'src/install.mjs', 'src/verify.mjs', 'templates/AGENTS.md']) {
     if (!files.includes(required)) throw new Error(`public package is missing ${required}`)
   }
   const secretPatterns = [

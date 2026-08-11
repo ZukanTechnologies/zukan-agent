@@ -88,3 +88,42 @@ test('CLI passes legacy migration only through an explicit update flag', async (
   assert.equal(calls.length, 1)
   assert.equal(calls[0].migrateLegacy, true)
 })
+
+test('CLI binds signed repository policy only through an explicit local or PR operation', async () => {
+  const calls = []
+  const result = {
+    status: 'bound', release: 'v0.1.0-alpha.6', revision: 'd'.repeat(40),
+    changedPaths: ['.agents/zukan/release-lock.json', '.agents/zukan/repository-capabilities.json'],
+  }
+  const dependencies = {
+    cwd: () => '/consumer',
+    doctor: async () => { calls.push(['doctor']); return { status: 'healthy', release: result.release, revision: result.revision } },
+    bind: async (options) => { calls.push(['bind', options.policyFile, options.attestationFile]); return result },
+    publish: async ({ operation }) => { calls.push(['publish']); return { ...await operation(), pullRequest: 'https://github.com/ZukanTechnologies/zukan/pull/9' } },
+  }
+  assert.match(await runCli([
+    'bind-policy', '--policy', '/tmp/policy.json', '--attestation', '/tmp/attestation.json',
+  ], dependencies), /Bound.*v0\.1\.0-alpha\.6/i)
+  assert.deepEqual(calls, [['doctor'], ['bind', '/tmp/policy.json', '/tmp/attestation.json']])
+  calls.length = 0
+  assert.match(await runCli([
+    'bind-policy', '--policy', '/tmp/policy.json', '--attestation', '/tmp/attestation.json', '--pr',
+  ], dependencies), /pull\/9/)
+  assert.deepEqual(calls, [['publish'], ['doctor'], ['bind', '/tmp/policy.json', '/tmp/attestation.json']])
+})
+
+test('CLI verifies the installed release before evaluating one signed admission route', async () => {
+  const calls = []
+  const result = await runCli([
+    'admit', '--route', 'production-incident', '--observations', '/tmp/current.json',
+  ], {
+    cwd: () => '/consumer',
+    doctor: async () => { calls.push('doctor'); return { status: 'healthy', release: 'v0.1.0-alpha.6', revision: 'd'.repeat(40) } },
+    admit: async (options) => {
+      calls.push(['admit', options.route, options.observationsFile])
+      return { output: '{"status":"blocked"}', exitCode: 1 }
+    },
+  })
+  assert.deepEqual(result, { output: '{"status":"blocked"}', exitCode: 1 })
+  assert.deepEqual(calls, ['doctor', ['admit', 'production-incident', '/tmp/current.json']])
+})

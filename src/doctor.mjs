@@ -35,9 +35,17 @@ async function inventory(root) {
 }
 
 function validateLock(lock) {
-  exactKeys(lock, [
+  const baseFields = [
     'schemaVersion', 'kind', 'repository', 'release', 'revision', 'archiveSha256',
     'manifestSha256', 'signatureBundleSha256', 'producer', 'files',
+  ]
+  const hasAdmission = lock?.capabilityAdmission !== undefined
+  if (hasAdmission !== (lock?.capabilityAdmissionAttestation !== undefined)) {
+    throw new Error('release lock capability admission fields must appear together')
+  }
+  exactKeys(lock, [
+    ...baseFields,
+    ...(hasAdmission ? ['capabilityAdmission', 'capabilityAdmissionAttestation'] : []),
   ], 'release lock')
   if (lock.schemaVersion !== 1 || lock.kind !== 'zukan-agent-release-lock' || lock.repository !== PRIVATE_REPOSITORY) {
     throw new Error('release lock authority is invalid')
@@ -61,6 +69,34 @@ function validateLock(lock) {
       throw new Error('release lock file inventory is invalid')
     }
     paths.add(file.path)
+  }
+  if (hasAdmission) {
+    exactKeys(lock.capabilityAdmission, [
+      'contractSha256', 'integrationDeclarationSha256', 'repository', 'repositoryPolicySha256',
+    ], 'release lock capability admission')
+    exactKeys(lock.capabilityAdmission.integrationDeclarationSha256, [
+      'claude-code', 'codex', 'opencode',
+    ], 'release lock integration declaration digests')
+    for (const digest of [
+      lock.capabilityAdmission.contractSha256,
+      lock.capabilityAdmission.repositoryPolicySha256,
+      ...Object.values(lock.capabilityAdmission.integrationDeclarationSha256),
+    ]) {
+      if (typeof digest !== 'string' || !/^[a-f0-9]{64}$/.test(digest)) {
+        throw new Error('release lock capability admission digest is invalid')
+      }
+    }
+    if (typeof lock.capabilityAdmission.repository !== 'string'
+      || !/^ZukanTechnologies\/[A-Za-z0-9._-]+$/.test(lock.capabilityAdmission.repository)) {
+      throw new Error('release lock capability admission repository is invalid')
+    }
+    exactKeys(lock.capabilityAdmissionAttestation, ['scheme', 'keyId', 'signature'], 'release lock capability admission signature')
+    if (lock.capabilityAdmissionAttestation.scheme !== 'ed25519'
+      || lock.capabilityAdmissionAttestation.keyId !== 'zukan-policy-v1'
+      || typeof lock.capabilityAdmissionAttestation.signature !== 'string'
+      || !/^[A-Za-z0-9+/]+={0,2}$/.test(lock.capabilityAdmissionAttestation.signature)) {
+      throw new Error('release lock capability admission signature is invalid')
+    }
   }
   return lock
 }

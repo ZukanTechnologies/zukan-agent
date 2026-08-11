@@ -31,6 +31,26 @@ function releasesGitHub(releases, latest) {
   }
 }
 
+async function bindFixturePolicy(target) {
+  const policy = Buffer.from('{"schemaVersion":1}\n')
+  const lockFile = path.join(target, '.agents/zukan/release-lock.json')
+  const lock = JSON.parse(await readFile(lockFile))
+  lock.capabilityAdmission = {
+    contractSha256: '1'.repeat(64),
+    integrationDeclarationSha256: {
+      'claude-code': '2'.repeat(64), codex: '3'.repeat(64), opencode: '4'.repeat(64),
+    },
+    repository: 'ZukanTechnologies/zukan',
+    repositoryPolicySha256: createHash('sha256').update(policy).digest('hex'),
+  }
+  lock.capabilityAdmissionAttestation = {
+    scheme: 'ed25519', keyId: 'zukan-policy-v1', signature: 'YQ==',
+  }
+  await writeFile(lockFile, `${JSON.stringify(lock, null, 2)}\n`)
+  await writeFile(path.join(target, '.agents/zukan/repository-capabilities.json'), policy)
+  return { lock: await readFile(lockFile), policy }
+}
+
 async function legacyTreeDigest(root) {
   const hash = createHash('sha256')
   const visit = async (current) => {
@@ -116,6 +136,44 @@ test('update verifies and deliberately replaces the authoritative pin and harnes
   assert.match(await readlink(path.join(target, '.agents/zukan/workflow')), new RegExp(`vendor/${newRelease.release}/workflow$`))
   assert.equal((await lstat(path.join(target, '.agents/skills/zukan-review'))).isSymbolicLink(), true)
   assert.equal((await lstat(path.join(target, `.agents/zukan/vendor/${oldRelease.release}`))).isDirectory(), true)
+})
+
+test('updating a bound release safely removes its release-specific repository policy', async (t) => {
+  const target = await targetFixture(t)
+  const oldRelease = await createFixtureRelease(t, { release: 'v1.2.3', revision: 'a'.repeat(40) })
+  const newRelease = await createFixtureRelease(t, { release: 'v1.2.4', revision: 'b'.repeat(40) })
+  const github = releasesGitHub([oldRelease, newRelease], newRelease)
+  await installRelease({ target, requestedRelease: oldRelease.release, github, verifySigstore: oldRelease.verifier() })
+  const previous = await bindFixturePolicy(target)
+
+  const result = await updateRelease({ target, requestedRelease: newRelease.release, github, verifySigstore: async () => {} })
+  assert.ok(result.changedPaths.includes('.agents/zukan/repository-capabilities.json'))
+  await assert.rejects(lstat(path.join(target, '.agents/zukan/repository-capabilities.json')), { code: 'ENOENT' })
+  const lock = JSON.parse(await readFile(path.join(target, '.agents/zukan/release-lock.json')))
+  assert.equal(lock.capabilityAdmission, undefined)
+
+  const rollbackTarget = await targetFixture(t)
+  await installRelease({ target: rollbackTarget, requestedRelease: oldRelease.release, github, verifySigstore: oldRelease.verifier() })
+  await bindFixturePolicy(rollbackTarget)
+  await assert.rejects(updateRelease({
+    target: rollbackTarget,
+    requestedRelease: newRelease.release,
+    github,
+    verifySigstore: async () => {},
+    fault: 'after-lock',
+  }), /injected update failure/)
+  assert.equal((await readFile(path.join(rollbackTarget, '.agents/zukan/release-lock.json'))).equals(previous.lock), true)
+  assert.equal((await readFile(path.join(rollbackTarget, '.agents/zukan/repository-capabilities.json'))).equals(previous.policy), true)
+
+  await assert.rejects(updateRelease({
+    target: rollbackTarget,
+    requestedRelease: newRelease.release,
+    github,
+    verifySigstore: async () => {},
+    fault: 'after-policy',
+  }), /injected update failure/)
+  assert.equal((await readFile(path.join(rollbackTarget, '.agents/zukan/release-lock.json'))).equals(previous.lock), true)
+  assert.equal((await readFile(path.join(rollbackTarget, '.agents/zukan/repository-capabilities.json'))).equals(previous.policy), true)
 })
 
 test('update rejects a missing pin and an unchanged selected release', async (t) => {

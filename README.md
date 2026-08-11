@@ -87,6 +87,52 @@ re-verifies the persisted signed manifest and Sigstore bundle, confirms the tag
 still resolves to the pinned revision, and checks the installed inventory and
 harness links for drift.
 
+## Signed capability admission
+
+Organization workflows may require authenticated GitHub, Linear, Sentry, and
+repository-approved operational tooling before a route starts. The consumer
+policy is repository-specific, but it is not trusted merely because it exists
+in the checkout. A protected organization workflow signs the exact policy,
+installed capability contract, all three harness integration declarations,
+consumer repository, producer release, and revision. Bind that returned proof
+locally, or publish only the bounded policy/lock diff through the existing PR
+gate:
+
+```sh
+npx @zukantech/agent bind-policy \
+  --policy /path/to/repository-capabilities.json \
+  --attestation /path/to/capability-admission.json
+
+npx @zukantech/agent bind-policy \
+  --policy /path/to/repository-capabilities.json \
+  --attestation /path/to/capability-admission.json \
+  --pr
+```
+
+Binding first runs the complete online doctor, verifies the organization
+Ed25519 signature and every byte digest, confirms the exact GitHub repository
+origin, and transactionally installs the policy plus augmented release lock.
+It cannot overwrite a different policy or an existing binding.
+
+Because the binding covers exact release bytes, updating the workflow release
+removes the old repository policy in the same transaction. Rebind a freshly
+signed policy before any route can be admitted on the new release.
+
+Each harness then supplies a current signed observation envelope from a
+repository-trusted observer. Admission independently re-runs doctor and invokes
+the verified evaluator installed by the protected release:
+
+```sh
+npx @zukantech/agent admit \
+  --route production-incident \
+  --observations /path/to/current-observations.json
+```
+
+A ready result exits successfully. Missing installation, authentication,
+authorization, identity membership, target access, freshness, or signature
+evidence exits nonzero with the harness-native remediation. The CLI never
+substitutes another tracker, telemetry source, or operations provider.
+
 The public npm package contains generic bootstrap logic only—no Zukan skills,
 marketplace payload, credentials, or protected release material.
 

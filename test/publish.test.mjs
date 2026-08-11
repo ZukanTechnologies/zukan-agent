@@ -105,6 +105,23 @@ test('--pr accepts the bounded removal of the legacy current link', async () => 
   assert.equal(fixture.calls.some((call) => call[0] === 'git' && call[1] === 'push'), true)
 })
 
+test('--pr accepts only the exact signed capability policy and augmented lock diff', async () => {
+  const actual = [
+    '.agents/zukan/release-lock.json',
+    '.agents/zukan/repository-capabilities.json',
+  ]
+  const fixture = runnerFixture({ actual })
+  const result = await publishChange({
+    target: '/consumer', runner: fixture.runner,
+    operation: async () => ({
+      status: 'bound', release: 'v0.1.0-alpha.6', revision: 'b'.repeat(40), changedPaths: actual,
+    }),
+  })
+  assert.equal(result.pullRequest, 'https://github.com/ZukanTechnologies/consumer/pull/9')
+  const add = fixture.calls.find((call) => call[0] === 'git' && call[1] === 'add')
+  assert.deepEqual(add.slice(-2), actual)
+})
+
 test('--pr disables local hooks and refuses any committed byte mismatch', async () => {
   const fixture = runnerFixture({ committedTree: 'd'.repeat(40) })
   await assert.rejects(

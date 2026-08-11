@@ -181,7 +181,7 @@ async function commitUpdate({ repository, oldLock, oldLockBytes, verified, fault
   ]
 }
 
-export async function updateRelease({ target, requestedRelease, github, verifySigstore, migrateLegacy = false, fault }) {
+export async function updateRelease({ target, requestedRelease, github, verifySigstore, trustedPolicyPublicKey, migrateLegacy = false, fault }) {
   const repository = await realpath(target)
   const lockPath = path.join(repository, '.agents/zukan/release-lock.json')
   let lockMetadata
@@ -208,7 +208,7 @@ export async function updateRelease({ target, requestedRelease, github, verifySi
   if (!lockMetadata.isFile()) throw new Error('the installed release lock is not a regular installer-managed file')
   const oldLockBytes = await readFile(lockPath)
   const oldLock = parseJson(oldLockBytes, 'installed release lock')
-  await doctorRelease({ target: repository, github, verifySigstore })
+  await doctorRelease({ target: repository, github, verifySigstore, trustedPolicyPublicKey })
   if (requestedRelease && requestedRelease === oldLock.release) throw new Error('the selected release is already installed')
   const verified = await resolveVerifiedRelease({ requestedRelease, github, verifySigstore })
   if (verified.manifest.release === oldLock.release) {

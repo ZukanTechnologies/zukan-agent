@@ -17,8 +17,9 @@ content, consumer policy, observation keys, or credentials in the npm package.
 ## Material choices
 
 - `bind-policy` requires a doctor-verified installed release, exact consumer
-  GitHub origin, exact policy/contract/integration digests, and an Ed25519
-  signature from pinned organization key `zukan-policy-v1`.
+  GitHub origin, exact release-manifest/policy/contract/integration digests, and
+  an Ed25519 signature over the complete repository/release/revision envelope
+  from pinned organization key `zukan-policy-v1`.
 - Policy and lock mutation is serialized, bounded, and rolled back after an
   injected late failure. An existing different policy or binding fails closed.
 - `--pr` reuses the existing exact-diff publication boundary; local mutation
@@ -45,3 +46,8 @@ content, consumer policy, observation keys, or credentials in the npm package.
   both prior files.
 - Independent review, CI, OIDC alpha.5 publication, and the real Zukan policy
   pilot are recorded before this slice completes.
+- Producer-signer review subsequently proved the initial signature covered only
+  the inner digest object. Alpha.6 now rejects release/revision relabelling and
+  binds the already Sigstore-authenticated release-manifest digest; the
+  permanent regression changes both the attestation and local lock identities
+  without re-signing and requires rejection.

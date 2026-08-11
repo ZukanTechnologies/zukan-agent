@@ -110,7 +110,8 @@ npx @zukantech/agent bind-policy \
 ```
 
 Binding first runs the complete online doctor, verifies the organization
-Ed25519 signature and every byte digest, confirms the exact GitHub repository
+Ed25519 signature over the repository, release, revision, release-manifest
+digest, contract, integrations, and policy, confirms the exact GitHub repository
 origin, and transactionally installs the policy plus augmented release lock.
 It cannot overwrite a different policy or an existing binding.
 

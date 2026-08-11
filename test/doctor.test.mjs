@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict'
+import { generateKeyPairSync, sign } from 'node:crypto'
 import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 import { doctorRelease } from '../src/doctor.mjs'
+import { stableJson } from '../src/admission.mjs'
 import { sha256 } from '../src/contracts.mjs'
 import { installRelease } from '../src/install.mjs'
 import { createFixtureRelease } from './support/fixture-release.mjs'
@@ -91,14 +93,28 @@ test('doctor preserves an optional signed capability binding while proving the b
       codex: '3'.repeat(64),
       opencode: '4'.repeat(64),
     },
+    releaseManifestSha256: lock.manifestSha256,
     repository: 'ZukanTechnologies/zukan',
     repositoryPolicySha256: '5'.repeat(64),
   }
   lock.capabilityAdmissionAttestation = {
     scheme: 'ed25519',
     keyId: 'zukan-policy-v1',
-    signature: 'YQ==',
+    signature: '',
   }
+  const { privateKey, publicKey } = generateKeyPairSync('ed25519')
+  lock.capabilityAdmissionAttestation.signature = sign(null, Buffer.from(stableJson({
+    schemaVersion: 1,
+    kind: 'zukan-capability-admission',
+    repository: lock.capabilityAdmission.repository,
+    release: lock.release,
+    revision: lock.revision,
+    capabilityAdmission: lock.capabilityAdmission,
+  })), privateKey).toString('base64')
   await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`)
-  assert.equal((await doctorRelease(fixture)).status, 'healthy')
+  const verification = { ...fixture, trustedPolicyPublicKey: publicKey.export({ type: 'spki', format: 'der' }) }
+  assert.equal((await doctorRelease(verification)).status, 'healthy')
+  lock.capabilityAdmission.repositoryPolicySha256 = '6'.repeat(64)
+  await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`)
+  await assert.rejects(doctorRelease(verification), /capability admission signature is invalid/i)
 })

@@ -46,6 +46,28 @@ function canonicalBase64(value, label) {
   return bytes
 }
 
+export function verifyCapabilityAdmissionSignature(value, trustedPolicyPublicKey = POLICY_PUBLIC_KEY) {
+  const signature = value.capabilityAdmissionAttestation
+  exactKeys(signature, ['scheme', 'keyId', 'signature'], 'capability admission signature')
+  if (signature.scheme !== 'ed25519' || signature.keyId !== 'zukan-policy-v1') {
+    throw new Error('capability admission signer is not trusted')
+  }
+  const publicKey = createPublicKey({ key: trustedPolicyPublicKey, format: 'der', type: 'spki' })
+  if (publicKey.asymmetricKeyType !== 'ed25519' || !verify(
+    null,
+    Buffer.from(stableJson({
+      schemaVersion: 1,
+      kind: 'zukan-capability-admission',
+      repository: value.capabilityAdmission.repository,
+      release: value.release,
+      revision: value.revision,
+      capabilityAdmission: value.capabilityAdmission,
+    })),
+    publicKey,
+    canonicalBase64(signature.signature, 'capability admission signature'),
+  )) throw new Error('capability admission signature is invalid')
+}
+
 async function validateBinding({ repository, policyBytes, attestation, lock, repositoryIdentity, trustedPolicyPublicKey }) {
   exactKeys(attestation, [
     'schemaVersion', 'kind', 'repository', 'release', 'revision',
@@ -68,11 +90,14 @@ async function validateBinding({ repository, policyBytes, attestation, lock, rep
   }
   const admission = attestation.capabilityAdmission
   exactKeys(admission, [
-    'contractSha256', 'integrationDeclarationSha256', 'repository', 'repositoryPolicySha256',
+    'contractSha256', 'integrationDeclarationSha256', 'releaseManifestSha256', 'repository', 'repositoryPolicySha256',
   ], 'capability admission')
   exactKeys(admission.integrationDeclarationSha256, ['claude-code', 'codex', 'opencode'], 'integration declaration digests')
   if (admission.repository !== actualRepository || admission.repositoryPolicySha256 !== sha256(policyBytes)) {
     throw new Error('capability admission repository policy digest is invalid')
+  }
+  if (admission.releaseManifestSha256 !== lock.manifestSha256) {
+    throw new Error('capability admission release manifest digest is invalid')
   }
   const contractFile = path.join(repository, '.agents/zukan/workflow/v1-capability-contract.json')
   const contractBytes = await regularBytes(contractFile, 'capability contract')
@@ -90,19 +115,8 @@ async function validateBinding({ repository, policyBytes, attestation, lock, rep
       throw new Error(`${harness} integration declaration digest is invalid`)
     }
   }
-  const signature = attestation.capabilityAdmissionAttestation
-  exactKeys(signature, ['scheme', 'keyId', 'signature'], 'capability admission signature')
-  if (signature.scheme !== 'ed25519' || signature.keyId !== 'zukan-policy-v1') {
-    throw new Error('capability admission signer is not trusted')
-  }
-  const publicKey = createPublicKey({ key: trustedPolicyPublicKey, format: 'der', type: 'spki' })
-  if (publicKey.asymmetricKeyType !== 'ed25519' || !verify(
-    null,
-    Buffer.from(stableJson(admission)),
-    publicKey,
-    canonicalBase64(signature.signature, 'capability admission signature'),
-  )) throw new Error('capability admission signature is invalid')
-  return { admission, signature }
+  verifyCapabilityAdmissionSignature(attestation, trustedPolicyPublicKey)
+  return { admission, signature: attestation.capabilityAdmissionAttestation }
 }
 
 export async function bindCapabilityPolicy({

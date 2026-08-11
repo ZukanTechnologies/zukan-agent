@@ -51,7 +51,12 @@ async function verifyRetainedRelease(vendor, evidence, verified) {
     || !evidenceMetadata.isDirectory() || evidenceMetadata.isSymbolicLink()) {
     throw new Error('retained release materialization has an unsafe file type')
   }
-  for (const [name, expected] of [['manifest.json', verified.manifestBytes], ['sigstore.json', verified.bundleBytes]]) {
+  const expectedEvidence = [
+    ['manifest.json', verified.manifestBytes],
+    ['sigstore.json', verified.bundleBytes],
+    ...(verified.certificationBytes ? [['certification.json', verified.certificationBytes]] : []),
+  ]
+  for (const [name, expected] of expectedEvidence) {
     const file = path.join(evidence, name)
     const metadata = await lstat(file)
     if (!metadata.isFile() || metadata.isSymbolicLink() || !(await readFile(file)).equals(expected)) {
@@ -75,7 +80,7 @@ async function verifyRetainedRelease(vendor, evidence, verified) {
 }
 
 async function commitUpdate({ repository, oldLock, oldLockBytes, verified, fault }) {
-  const { manifest, manifestBytes, bundleBytes, lockBytes, extracted } = verified
+  const { manifest, manifestBytes, bundleBytes, certificationBytes, lockBytes, extracted } = verified
   const oldVendor = path.join(repository, '.agents/zukan/vendor', oldLock.release)
   const newVendor = path.join(repository, '.agents/zukan/vendor', manifest.release)
   const evidence = path.join(repository, '.agents/zukan/evidence', manifest.release)
@@ -126,6 +131,9 @@ async function commitUpdate({ repository, oldLock, oldLockBytes, verified, fault
       await mkdir(evidence, { recursive: true })
       await writeFile(path.join(evidence, 'manifest.json'), manifestBytes, { flag: 'wx' })
       await writeFile(path.join(evidence, 'sigstore.json'), bundleBytes, { flag: 'wx' })
+      if (certificationBytes) {
+        await writeFile(path.join(evidence, 'certification.json'), certificationBytes, { flag: 'wx' })
+      }
     }
 
     for (const [target, source] of newLinks) {

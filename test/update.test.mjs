@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 import { installRelease } from '../src/install.mjs'
+import { doctorRelease } from '../src/doctor.mjs'
 import { updateRelease } from '../src/update.mjs'
 import { stableJson } from '../src/admission.mjs'
 import { createFixtureRelease } from './support/fixture-release.mjs'
@@ -128,9 +129,9 @@ async function createLegacyInstallation(t) {
 
 test('update verifies and deliberately replaces the authoritative pin and harness links', async (t) => {
   const target = await targetFixture(t)
-  const oldRelease = await createFixtureRelease(t, { release: 'v1.2.3', revision: 'a'.repeat(40) })
+  const oldRelease = await createFixtureRelease(t, { release: 'v1.2.3-rc.1', revision: 'a'.repeat(40) })
   const newRelease = await createFixtureRelease(t, {
-    release: 'v1.2.4', revision: 'b'.repeat(40),
+    release: 'v1.2.4-rc.1', revision: 'b'.repeat(40),
     files: {
       'skills/zukan-flow/SKILL.md': '---\nname: zukan-flow\ndescription: updated\n---\n',
       'skills/zukan-review/SKILL.md': '---\nname: zukan-review\ndescription: added\n---\n',
@@ -154,10 +155,29 @@ test('update verifies and deliberately replaces the authoritative pin and harnes
   assert.equal((await lstat(path.join(target, `.agents/zukan/vendor/${oldRelease.release}`))).isDirectory(), true)
 })
 
+test('update preserves stable certification evidence for subsequent doctor checks', async (t) => {
+  const target = await targetFixture(t)
+  const oldRelease = await createFixtureRelease(t, { release: 'v1.0.0-rc.1', revision: 'a'.repeat(40) })
+  const stableRelease = await createFixtureRelease(t, {
+    release: 'v1.1.0',
+    revision: 'b'.repeat(40),
+    certified: true,
+    prerelease: false,
+  })
+  const github = releasesGitHub([oldRelease, stableRelease], stableRelease)
+  await installRelease({ target, requestedRelease: oldRelease.release, github, verifySigstore: oldRelease.verifier() })
+  await updateRelease({ target, requestedRelease: stableRelease.release, github, verifySigstore: async () => {} })
+  assert.deepEqual(
+    await readFile(path.join(target, '.agents/zukan/evidence/v1.1.0/certification.json')),
+    stableRelease.certificationBytes,
+  )
+  assert.equal((await doctorRelease({ target, github, verifySigstore: async () => {} })).status, 'healthy')
+})
+
 test('updating a bound release safely removes its release-specific repository policy', async (t) => {
   const target = await targetFixture(t)
-  const oldRelease = await createFixtureRelease(t, { release: 'v1.2.3', revision: 'a'.repeat(40) })
-  const newRelease = await createFixtureRelease(t, { release: 'v1.2.4', revision: 'b'.repeat(40) })
+  const oldRelease = await createFixtureRelease(t, { release: 'v1.2.3-rc.1', revision: 'a'.repeat(40) })
+  const newRelease = await createFixtureRelease(t, { release: 'v1.2.4-rc.1', revision: 'b'.repeat(40) })
   const github = releasesGitHub([oldRelease, newRelease], newRelease)
   await installRelease({ target, requestedRelease: oldRelease.release, github, verifySigstore: oldRelease.verifier() })
   const previous = await bindFixturePolicy(target)
@@ -198,7 +218,7 @@ test('updating a bound release safely removes its release-specific repository po
 
 test('update rejects a missing pin and an unchanged selected release', async (t) => {
   const target = await targetFixture(t)
-  const release = await createFixtureRelease(t, { release: 'v1.2.3' })
+  const release = await createFixtureRelease(t, { release: 'v1.2.3-rc.1' })
   const github = releasesGitHub([release], release)
   await assert.rejects(updateRelease({ target, github, verifySigstore: async () => {} }), /installed.*pin|release lock/i)
   await installRelease({ target, requestedRelease: release.release, github, verifySigstore: release.verifier() })
@@ -207,8 +227,8 @@ test('update rejects a missing pin and an unchanged selected release', async (t)
 
 test('a failed update restores the previous pin and links and leaves no new vendor tree', async (t) => {
   const target = await targetFixture(t)
-  const oldRelease = await createFixtureRelease(t, { release: 'v1.2.3', revision: 'a'.repeat(40) })
-  const newRelease = await createFixtureRelease(t, { release: 'v1.2.4', revision: 'b'.repeat(40) })
+  const oldRelease = await createFixtureRelease(t, { release: 'v1.2.3-rc.1', revision: 'a'.repeat(40) })
+  const newRelease = await createFixtureRelease(t, { release: 'v1.2.4-rc.1', revision: 'b'.repeat(40) })
   const github = releasesGitHub([oldRelease, newRelease], newRelease)
   await installRelease({ target, requestedRelease: oldRelease.release, github, verifySigstore: oldRelease.verifier() })
   const oldLock = await readFile(path.join(target, '.agents/zukan/release-lock.json'))
@@ -226,7 +246,7 @@ test('a failed update restores the previous pin and links and leaves no new vend
 test('update removes obsolete harness links while retaining the old immutable vendor evidence', async (t) => {
   const target = await targetFixture(t)
   const oldRelease = await createFixtureRelease(t, {
-    release: 'v1.2.3', revision: 'a'.repeat(40),
+    release: 'v1.2.3-rc.1', revision: 'a'.repeat(40),
     files: {
       'skills/zukan-flow/SKILL.md': 'flow\n',
       'skills/zukan-obsolete/SKILL.md': 'obsolete\n',
@@ -234,7 +254,7 @@ test('update removes obsolete harness links while retaining the old immutable ve
       'bin/evaluate-route-admission.mjs': 'export {}\n',
     },
   })
-  const newRelease = await createFixtureRelease(t, { release: 'v1.2.4', revision: 'b'.repeat(40) })
+  const newRelease = await createFixtureRelease(t, { release: 'v1.2.4-rc.1', revision: 'b'.repeat(40) })
   const github = releasesGitHub([oldRelease, newRelease], newRelease)
   await installRelease({ target, requestedRelease: oldRelease.release, github, verifySigstore: oldRelease.verifier() })
   await updateRelease({ target, requestedRelease: newRelease.release, github, verifySigstore: async () => {} })
@@ -245,8 +265,8 @@ test('update removes obsolete harness links while retaining the old immutable ve
 
 test('new release verification failure preserves the current installation byte-for-byte', async (t) => {
   const target = await targetFixture(t)
-  const oldRelease = await createFixtureRelease(t, { release: 'v1.2.3', revision: 'a'.repeat(40) })
-  const newRelease = await createFixtureRelease(t, { release: 'v1.2.4', revision: 'b'.repeat(40) })
+  const oldRelease = await createFixtureRelease(t, { release: 'v1.2.3-rc.1', revision: 'a'.repeat(40) })
+  const newRelease = await createFixtureRelease(t, { release: 'v1.2.4-rc.1', revision: 'b'.repeat(40) })
   const github = releasesGitHub([oldRelease, newRelease], newRelease)
   await installRelease({ target, requestedRelease: oldRelease.release, github, verifySigstore: oldRelease.verifier() })
   const oldLock = await readFile(path.join(target, '.agents/zukan/release-lock.json'))
@@ -265,8 +285,8 @@ test('new release verification failure preserves the current installation byte-f
 
 test('an explicit rollback reuses only a retained release that still matches signed evidence', async (t) => {
   const target = await targetFixture(t)
-  const oldRelease = await createFixtureRelease(t, { release: 'v1.2.3', revision: 'a'.repeat(40) })
-  const newRelease = await createFixtureRelease(t, { release: 'v1.2.4', revision: 'b'.repeat(40) })
+  const oldRelease = await createFixtureRelease(t, { release: 'v1.2.3-rc.1', revision: 'a'.repeat(40) })
+  const newRelease = await createFixtureRelease(t, { release: 'v1.2.4-rc.1', revision: 'b'.repeat(40) })
   const github = releasesGitHub([oldRelease, newRelease], newRelease)
   await installRelease({ target, requestedRelease: oldRelease.release, github, verifySigstore: oldRelease.verifier() })
   await updateRelease({ target, requestedRelease: newRelease.release, github, verifySigstore: async () => {} })
@@ -279,8 +299,8 @@ test('an explicit rollback reuses only a retained release that still matches sig
 
 test('rollback rejects drifted retained materialization before changing the current pin', async (t) => {
   const target = await targetFixture(t)
-  const oldRelease = await createFixtureRelease(t, { release: 'v1.2.3', revision: 'a'.repeat(40) })
-  const newRelease = await createFixtureRelease(t, { release: 'v1.2.4', revision: 'b'.repeat(40) })
+  const oldRelease = await createFixtureRelease(t, { release: 'v1.2.3-rc.1', revision: 'a'.repeat(40) })
+  const newRelease = await createFixtureRelease(t, { release: 'v1.2.4-rc.1', revision: 'b'.repeat(40) })
   const github = releasesGitHub([oldRelease, newRelease], newRelease)
   await installRelease({ target, requestedRelease: oldRelease.release, github, verifySigstore: oldRelease.verifier() })
   await updateRelease({ target, requestedRelease: newRelease.release, github, verifySigstore: async () => {} })
@@ -297,7 +317,9 @@ test('rollback rejects drifted retained materialization before changing the curr
 
 test('explicit legacy migration verifies and replaces only installer-managed paths', async (t) => {
   const legacy = await createLegacyInstallation(t)
-  const next = await createFixtureRelease(t, { release: 'v0.1.0-alpha.6', revision: 'd'.repeat(40) })
+  const next = await createFixtureRelease(t, {
+    release: 'v1.1.0', revision: 'd'.repeat(40), certified: true, prerelease: false,
+  })
   const result = await updateRelease({
     target: legacy.target,
     requestedRelease: next.release,
@@ -319,6 +341,10 @@ test('explicit legacy migration verifies and replaces only installer-managed pat
   assert.equal(await readFile(path.join(legacy.target, '.claude/settings.json'), 'utf8'), '{"consumer":true}\n')
   assert.equal(result.changedPaths.includes('AGENTS.md'), false)
   assert.equal(result.changedPaths.includes('.claude/settings.json'), false)
+  assert.deepEqual(
+    await readFile(path.join(legacy.target, '.agents/zukan/evidence/v1.1.0/certification.json')),
+    next.certificationBytes,
+  )
 })
 
 test('legacy migration requires an explicit flag and exact legacy integrity', async (t) => {

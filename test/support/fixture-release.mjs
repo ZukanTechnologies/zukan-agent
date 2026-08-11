@@ -16,9 +16,13 @@ export async function createFixtureRelease(t, options = {}) {
   t.after(() => rm(fixture, { force: true, recursive: true }))
   const release = options.release ?? 'v1.1.0-rc.1'
   const revision = options.revision ?? 'a'.repeat(40)
-  const files = options.files ?? defaults
   const fault = options.fault ?? {}
   const certified = options.certified ?? false
+  const certificationContract = '{"schemaVersion":1,"kind":"zukan-harness-certification"}\n'
+  const files = {
+    ...(options.files ?? defaults),
+    ...(certified ? { 'workflow/v1-certification-contract.json': certificationContract } : {}),
+  }
   const payload = path.join(fixture, 'payload')
   await mkdir(payload)
   const inventory = []
@@ -41,7 +45,10 @@ export async function createFixtureRelease(t, options = {}) {
     repository: PRIVATE_REPOSITORY,
     release,
     revision,
-    contract: { path: 'workflow/v1-certification-contract.json', sha256: 'c'.repeat(64) },
+    contract: {
+      path: 'workflow/v1-certification-contract.json',
+      sha256: fault.certificationContractDigest ?? sha256(Buffer.from(certificationContract)),
+    },
     harnesses: [
       { name: 'claude-code', package: '@anthropic-ai/claude-code', binary: 'claude', version: '2.1.220', result: 'passed' },
       { name: 'codex', package: '@openai/codex', binary: 'codex', version: '0.146.0', result: 'passed' },
@@ -52,6 +59,7 @@ export async function createFixtureRelease(t, options = {}) {
       { name: 'repository-discovery', result: 'passed' },
       { name: 'capability-admission', result: 'passed' },
       { name: 'content-identity', result: 'passed' },
+      { name: 'integrity', result: 'passed' },
     ],
     nativeMarketplace: {
       marketplace: 'zukan-technologies',

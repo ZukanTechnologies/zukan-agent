@@ -38,6 +38,9 @@ export async function resolveVerifiedRelease({ requestedRelease, github, verifyS
   const bundleBytes = await github.downloadAsset(release, RELEASE_ASSETS.bundle)
   const archive = await github.downloadAsset(release, RELEASE_ASSETS.archive)
   const manifest = validateManifest(parseJson(manifestBytes, 'release manifest'), selectedRelease)
+  if (!release.prerelease && manifest.schemaVersion !== 2) {
+    throw new Error('stable releases must use the certified manifest schema')
+  }
   const certificationBytes = manifest.schemaVersion === 2
     ? await github.downloadAsset(release, RELEASE_ASSETS.certification)
     : null

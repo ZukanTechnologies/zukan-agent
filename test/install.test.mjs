@@ -131,6 +131,40 @@ test('a stable install verifies and preserves signed harness certification evide
   assert.deepEqual(await readdir(rejectedTarget), ['.git'])
 })
 
+test('a stable release must use the certified manifest schema and bind its contract bytes', async (t) => {
+  const uncertifiedTarget = await targetFixture(t)
+  const uncertified = await createFixtureRelease(t, {
+    release: 'v1.1.0',
+    prerelease: false,
+  })
+  await assert.rejects(
+    installRelease({
+      target: uncertifiedTarget,
+      github: uncertified.github({ authorized: true }),
+      verifySigstore: uncertified.verifier(),
+    }),
+    /stable.*certification|certified.*schema/i,
+  )
+  assert.deepEqual(await readdir(uncertifiedTarget), ['.git'])
+
+  const driftedTarget = await targetFixture(t)
+  const drifted = await createFixtureRelease(t, {
+    release: 'v1.1.0',
+    certified: true,
+    prerelease: false,
+    fault: { certificationContractDigest: 'd'.repeat(64) },
+  })
+  await assert.rejects(
+    installRelease({
+      target: driftedTarget,
+      github: drifted.github({ authorized: true }),
+      verifySigstore: drifted.verifier(),
+    }),
+    /certification contract.*digest|contract.*inventory/i,
+  )
+  assert.deepEqual(await readdir(driftedTarget), ['.git'])
+})
+
 test('authorization denial returns no protected content and leaves the target untouched', async (t) => {
   const target = await targetFixture(t)
   const before = await readdir(target)

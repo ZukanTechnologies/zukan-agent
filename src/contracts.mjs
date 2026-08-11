@@ -203,6 +203,7 @@ export function validateCertification(value, manifest) {
     'repository-discovery',
     'capability-admission',
     'content-identity',
+    'integrity',
   ]
   if (!Array.isArray(value.gates) || value.gates.length !== expectedGates.length) {
     throw new Error('release certification gate results are invalid')
@@ -213,11 +214,17 @@ export function validateCertification(value, manifest) {
       throw new Error('release certification gate results are invalid')
     }
   }
+  const contractFile = manifest.files.find(({ path: relative }) => relative === value.contract.path)
+  if (!contractFile || contractFile.sha256 !== value.contract.sha256) {
+    throw new Error('release certification contract digest does not match the signed inventory')
+  }
   exactKeys(value.nativeMarketplace, [
     'marketplace', 'plugin', 'version', 'skills', 'claude', 'codex', 'opencode', 'repository',
   ], 'native marketplace certification')
   if (
-    value.nativeMarketplace.version !== manifest.release.split('-')[0].slice(1)
+    value.nativeMarketplace.marketplace !== 'zukan-technologies'
+    || value.nativeMarketplace.plugin !== 'zukan-sdlc'
+    || value.nativeMarketplace.version !== manifest.release.split('-')[0].slice(1)
     || !Number.isSafeInteger(value.nativeMarketplace.skills)
     || value.nativeMarketplace.skills <= 0
     || value.nativeMarketplace.claude !== 'installed'

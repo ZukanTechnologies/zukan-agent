@@ -3,22 +3,16 @@ import { cp, lstat, mkdir, readFile, realpath, rename, rm, rmdir, symlink, write
 import { hostname, uptime } from 'node:os'
 import path from 'node:path'
 import {
-  PRIVATE_REPOSITORY,
-  RELEASE_ASSETS,
   exactKeys,
-  expectedProducer,
   parseJson,
-  sha256,
-  validateManifest,
-  validateReleaseName,
 } from './contracts.mjs'
-import { extractVerifiedArchive } from './archive.mjs'
+import { resolveVerifiedRelease } from './release.mjs'
 
 async function exists(file) {
   try { return await lstat(file) } catch (error) { if (error.code === 'ENOENT') return null; throw error }
 }
 
-async function requireSafeAncestors(root, target) {
+export async function requireSafeAncestors(root, target) {
   const canonicalRoot = await realpath(root)
   const relative = path.relative(canonicalRoot, target)
   if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
@@ -31,21 +25,6 @@ async function requireSafeAncestors(root, target) {
     const entry = await exists(current)
     if (!entry) break
     if (entry.isSymbolicLink() || !entry.isDirectory()) throw new Error(`${path.relative(root, current)} is an unsafe installation ancestor`)
-  }
-}
-
-function lockDocument({ manifest, manifestBytes, bundleBytes }) {
-  return {
-    schemaVersion: 1,
-    kind: 'zukan-agent-release-lock',
-    repository: PRIVATE_REPOSITORY,
-    release: manifest.release,
-    revision: manifest.revision,
-    archiveSha256: manifest.archive.sha256,
-    manifestSha256: sha256(manifestBytes),
-    signatureBundleSha256: sha256(bundleBytes),
-    producer: manifest.producer,
-    files: manifest.files,
   }
 }
 
@@ -120,6 +99,7 @@ async function commitInstallation(plan, extracted, manifestBytes, bundleBytes, l
     if (!await exists(directory)) createdParents.push(directory)
   }
   const stage = path.join(plan.repository, '.agents/zukan', `.stage-${randomUUID()}`)
+  let agentsCreated = false
   try {
     await assertAncestorsSafe(plan)
     await mkdir(path.dirname(stage), { recursive: true })
@@ -149,6 +129,7 @@ async function commitInstallation(plan, extracted, manifestBytes, bundleBytes, l
       const template = new URL('../templates/AGENTS.md', import.meta.url)
       await cp(template, agents, { errorOnExist: true, force: false })
       created.push(agents)
+      agentsCreated = true
     }
     await assertAncestorsSafe(plan)
     await mkdir(plan.evidence, { recursive: true })
@@ -166,9 +147,10 @@ async function commitInstallation(plan, extracted, manifestBytes, bundleBytes, l
     await removeEmptyParents(createdParents)
     throw error
   }
+  return { agentsCreated }
 }
 
-async function acquireInstallationLock(target) {
+export async function acquireInstallationLock(target) {
   const repository = await realpath(target)
   const lockDirectory = path.join(repository, '.zukan-agent-install.lock')
   const ownerPath = path.join(lockDirectory, 'owner.json')
@@ -251,36 +233,23 @@ async function describeExistingLock(lockDirectory) {
 }
 
 export async function installRelease({ target, requestedRelease, github, verifySigstore }) {
-  if (!github || typeof verifySigstore !== 'function') throw new Error('installer dependencies are unavailable')
-  await github.authorize(PRIVATE_REPOSITORY)
-  const release = await github.resolveRelease(requestedRelease ? validateReleaseName(requestedRelease) : undefined)
-  const selectedRelease = validateReleaseName(release.tagName)
-  if (release.draft || (!requestedRelease && release.prerelease)) {
-    throw new Error('the resolved release is not an approved stable release')
-  }
-  const manifestBytes = await github.downloadAsset(release, RELEASE_ASSETS.manifest)
-  const bundleBytes = await github.downloadAsset(release, RELEASE_ASSETS.bundle)
-  const archive = await github.downloadAsset(release, RELEASE_ASSETS.archive)
-  const resolvedRevision = await github.resolveTag(PRIVATE_REPOSITORY, selectedRelease)
-  const manifest = validateManifest(parseJson(manifestBytes, 'release manifest'), selectedRelease)
-  if (manifest.revision !== resolvedRevision) throw new Error('release tag revision does not match the manifest revision')
-  const bundle = parseJson(bundleBytes, 'Sigstore bundle')
-  const producer = expectedProducer(selectedRelease)
-  await verifySigstore({
-    bundle,
-    artifact: manifestBytes,
-    certificateIssuer: producer.issuer,
-    certificateIdentityURI: producer.identity,
-  })
-  const extracted = await extractVerifiedArchive(archive, manifest)
+  const verified = await resolveVerifiedRelease({ requestedRelease, github, verifySigstore })
+  const { manifest, manifestBytes, bundleBytes, lockBytes, extracted } = verified
   let mutex
   try {
     mutex = await acquireInstallationLock(target)
-    const lock = lockDocument({ manifest, manifestBytes, bundleBytes })
-    const lockBytes = Buffer.from(`${JSON.stringify(lock, null, 2)}\n`)
     const plan = await preflight(target, manifest, lockBytes)
-    await commitInstallation(plan, extracted.root, manifestBytes, bundleBytes, lockBytes)
-    return { status: 'installed', release: manifest.release, revision: manifest.revision }
+    const committed = await commitInstallation(plan, extracted.root, manifestBytes, bundleBytes, lockBytes)
+    const changedPaths = [
+      '.agents/zukan/release-lock.json',
+      `.agents/zukan/vendor/${manifest.release}`,
+      `.agents/zukan/evidence/${manifest.release}`,
+      '.agents/zukan/workflow',
+      '.agents/zukan/bin',
+      ...plan.skills.flatMap((skill) => [`.agents/skills/${skill}`, `.claude/skills/${skill}`]),
+    ]
+    if (committed.agentsCreated) changedPaths.push('AGENTS.md')
+    return { status: 'installed', release: manifest.release, revision: manifest.revision, changedPaths }
   } finally {
     try {
       if (mutex) await mutex.release()

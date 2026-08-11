@@ -37,7 +37,7 @@ test('--pr publishes only the exact installer-owned diff from the default branch
   })
   assert.equal(operations, 1)
   assert.equal(result.pullRequest, 'https://github.com/ZukanTechnologies/consumer/pull/9')
-  assert.equal(fixture.calls.some((call) => call[0] === 'git' && call[1] === 'commit'), true)
+  assert.equal(fixture.calls.some((call) => call[0] === 'git' && call.includes('commit')), true)
   assert.equal(fixture.calls.some((call) => call[0] === 'git' && call[1] === 'push'), true)
   assert.equal(fixture.calls.some((call) => call[0] === 'gh' && call[1] === 'pr'), true)
 })
@@ -92,14 +92,16 @@ test('--pr force-adds an installer-owned payload hidden by consumer ignore rules
   assert.deepEqual(add.slice(0, 4), ['git', 'add', '-f', '-A'])
 })
 
-test('--pr refuses to push when a commit hook changes bytes inside an allowed path', async () => {
+test('--pr disables local hooks and refuses any committed byte mismatch', async () => {
   const fixture = runnerFixture({ committedTree: 'd'.repeat(40) })
   await assert.rejects(
     publishChange({
       target: '/consumer', runner: fixture.runner,
       operation: async () => ({ status: 'updated', release: 'v1.2.4', revision: 'b'.repeat(40), changedPaths: ['.agents/zukan/release-lock.json'] }),
     }),
-    /hook changed.*bytes|committed tree/i,
+    /committed workflow bytes|committed tree/i,
   )
+  const commit = fixture.calls.find((call) => call[0] === 'git' && call.includes('commit'))
+  assert.deepEqual(commit.slice(0, 4), ['git', '-c', 'core.hooksPath=/dev/null', 'commit'])
   assert.equal(fixture.calls.some((call) => call[1] === 'push'), false)
 })

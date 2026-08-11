@@ -76,13 +76,13 @@ export async function publishChange({ target, operation, runner = defaultRunner 
 
   const action = result.status === 'installed' ? 'enable' : 'update'
   const title = `chore(agent): ${action} Zukan workflows at ${result.release}`
-  await run('git', ['commit', '-m', title], 'workflow change commit')
+  await run('git', ['-c', 'core.hooksPath=/dev/null', 'commit', '-m', title], 'workflow change commit')
   const committedTree = (await run('git', ['rev-parse', 'HEAD^{tree}'], 'committed tree inspection')).toString('utf8').trim()
-  if (committedTree !== stagedTree) throw new Error('a repository hook changed the staged workflow bytes; nothing was pushed')
+  if (committedTree !== stagedTree) throw new Error('the committed workflow bytes differ from the validated staged tree; nothing was pushed')
   const committed = new Set(nulPaths(await run('git', ['diff-tree', '--no-commit-id', '--name-only', '-r', '-z', 'HEAD'], 'committed change inspection')))
   if (!exactSet(committed, actual)) throw new Error('the committed diff does not exactly match the bounded installer change; nothing was pushed')
   if ((await run('git', ['status', '--porcelain=v1', '-z', '--untracked-files=all'], 'post-commit working tree check')).length) {
-    throw new Error('a repository hook changed the working tree after commit; nothing was pushed')
+    throw new Error('the working tree changed after the validated commit; nothing was pushed')
   }
   await run('git', ['push', '--set-upstream', 'origin', publicationBranch], 'workflow branch push')
   const body = [

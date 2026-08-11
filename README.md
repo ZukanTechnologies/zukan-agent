@@ -52,10 +52,11 @@ npx @zukantech/agent update --release v1.2.3 --pr
 prerequisite for ordinary application development. It requires a clean checkout
 on the repository's default branch, creates a dedicated branch, force-adds only
 installer-owned paths (even when generic ignore rules cover them), snapshots the
-complete staged Git tree, and requires the commit produced after local hooks to
-have the identical tree before it pushes or opens the pull request. It refuses
-dirty, non-default-branch, out-of-scope, partial, or hook-modified diffs before
-any publication write.
+complete staged Git tree, creates the machine-generated commit with local hooks
+disabled, and requires the commit to have the identical tree before it pushes or
+opens the pull request. Repository CI and PR gates remain authoritative. The CLI
+refuses dirty, non-default-branch, out-of-scope, partial, or byte-mismatched diffs
+before external publication.
 
 After installation, run:
 

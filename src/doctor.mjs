@@ -11,6 +11,7 @@ import {
   validateCertification,
   validateManifest,
   validateReleaseName,
+  requireCompatibleBootstrap,
 } from './contracts.mjs'
 
 async function requireSymlink(target, source, repository) {
@@ -47,20 +48,22 @@ function validateLock(lock) {
   }
   exactKeys(lock, [
     ...baseFields,
-    ...(lock?.schemaVersion === 2 ? ['certificationSha256'] : []),
+    ...([2, 3].includes(lock?.schemaVersion) ? ['certificationSha256'] : []),
+    ...(lock?.schemaVersion === 3 ? ['minimumBootstrapVersion'] : []),
     ...(hasAdmission ? ['capabilityAdmission', 'capabilityAdmissionAttestation'] : []),
   ], 'release lock')
-  if (![1, 2].includes(lock.schemaVersion) || lock.kind !== 'zukan-agent-release-lock' || lock.repository !== PRIVATE_REPOSITORY) {
+  if (![1, 2, 3].includes(lock.schemaVersion) || lock.kind !== 'zukan-agent-release-lock' || lock.repository !== PRIVATE_REPOSITORY) {
     throw new Error('release lock authority is invalid')
   }
   validateReleaseName(lock.release)
   for (const [label, digest] of [
     ['revision', lock.revision], ['archive', lock.archiveSha256], ['manifest', lock.manifestSha256], ['signature bundle', lock.signatureBundleSha256],
-    ...(lock.schemaVersion === 2 ? [['certification', lock.certificationSha256]] : []),
+    ...([2, 3].includes(lock.schemaVersion) ? [['certification', lock.certificationSha256]] : []),
   ]) {
     const pattern = label === 'revision' ? /^[a-f0-9]{40}$/ : /^[a-f0-9]{64}$/
     if (typeof digest !== 'string' || !pattern.test(digest)) throw new Error(`release lock ${label} is invalid`)
   }
+  if (lock.schemaVersion === 3) requireCompatibleBootstrap(lock.minimumBootstrapVersion)
   exactKeys(lock.producer, ['issuer', 'identity'], 'release lock producer')
   if (JSON.stringify(lock.producer) !== JSON.stringify(expectedProducer(lock.release))) {
     throw new Error('release lock producer identity is invalid')
@@ -123,7 +126,7 @@ export async function doctorRelease({ target, github, verifySigstore, trustedPol
   const evidence = path.join(repository, '.agents/zukan/evidence', lock.release)
   const manifestBytes = await readFile(path.join(evidence, 'manifest.json'))
   const bundleBytes = await readFile(path.join(evidence, 'sigstore.json'))
-  const certificationBytes = lock.schemaVersion === 2
+  const certificationBytes = [2, 3].includes(lock.schemaVersion)
     ? await readFile(path.join(evidence, 'certification.json'))
     : null
   if (

@@ -10,7 +10,7 @@ import { sha256 } from '../src/contracts.mjs'
 const revision = 'a'.repeat(40)
 const release = 'v0.1.0-alpha.6'
 
-async function fixture(t) {
+async function fixture(t, { policySchema = 2 } = {}) {
   const target = await mkdtemp(path.join(tmpdir(), 'zukan-agent-admission-'))
   t.after(() => rm(target, { force: true, recursive: true }))
   await mkdir(path.join(target, '.git'))
@@ -47,10 +47,9 @@ async function fixture(t) {
   }
   await writeFile(path.join(target, '.agents/zukan/release-lock.json'), `${JSON.stringify(baseLock, null, 2)}\n`)
   const policy = Buffer.from(`${JSON.stringify({
-    schemaVersion: 1,
+    schemaVersion: policySchema,
     repository: 'ZukanTechnologies/zukan',
-    trustedObservationKeys: [],
-    authorizedIdentities: {},
+    ...(policySchema === 1 ? { trustedObservationKeys: [], authorizedIdentities: {} } : {}),
     capabilities: [],
     routes: [],
   }, null, 2)}\n`)
@@ -135,17 +134,31 @@ test('binds only an organization-signed policy for the exact repository and inst
   }), /signature/i)
 })
 
-test('runs the verified installed evaluator with fixed policy and lock paths', async (t) => {
+test('continues to bind signed schema-1 policies for valid older release pins', async (t) => {
+  const value = await fixture(t, { policySchema: 1 })
+  const result = await bindCapabilityPolicy({
+    target: value.target,
+    policyFile: value.policyFile,
+    attestationFile: value.attestationFile,
+    repositoryIdentity: async () => 'ZukanTechnologies/zukan',
+    trustedPolicyPublicKey: value.publicKey.export({ type: 'spki', format: 'der' }),
+  })
+  assert.equal(result.status, 'bound')
+})
+
+test('runs the verified installed evaluator with a harness and bounded target selections', async (t) => {
   const value = await fixture(t)
   await writeFile(path.join(value.target, '.agents/zukan/repository-capabilities.json'), '{}\n')
   await writeFile(path.join(value.target, '.agents/zukan/bin/evaluate-route-admission.mjs'), 'fixture\n')
-  const observations = path.join(value.target, 'observations.json')
-  await writeFile(observations, '{}\n')
   const calls = []
   const result = await evaluateAdmission({
     target: value.target,
     route: 'small-feature',
-    observationsFile: observations,
+    harness: 'codex',
+    targets: [
+      'github.repository=github:repository/ZukanTechnologies/zukan',
+      'sentry.telemetry=sentry:organization/zukan-tech/zukan-web',
+    ],
     runner: async (command, args) => {
       calls.push([command, ...args])
       return { stdout: '{"status":"blocked"}\n', stderr: '', exitCode: 1 }
@@ -157,9 +170,44 @@ test('runs the verified installed evaluator with fixed policy and lock paths', a
   assert.deepEqual(calls[0].slice(2), [
     '--contract', path.join(repository, '.agents/zukan/workflow/v1-capability-contract.json'),
     '--route', 'small-feature',
-    '--observations', observations,
+    '--harness', 'codex',
+    '--target', 'github.repository=github:repository/ZukanTechnologies/zukan',
+    '--target', 'sentry.telemetry=sentry:organization/zukan-tech/zukan-web',
     '--repository', path.join(repository, '.agents/zukan/repository-capabilities.json'),
     '--release-lock', path.join(repository, '.agents/zukan/release-lock.json'),
+  ])
+})
+
+test('rejects unsupported harnesses and malformed target selections before executing the evaluator', async (t) => {
+  const value = await fixture(t)
+  let calls = 0
+  const runner = async () => { calls += 1 }
+  await assert.rejects(evaluateAdmission({
+    target: value.target, route: 'bug', harness: 'other', targets: [], runner,
+  }), /harness/i)
+  await assert.rejects(evaluateAdmission({
+    target: value.target, route: 'bug', harness: 'codex', targets: ['sentry.telemetry'], runner,
+  }), /target/i)
+  assert.equal(calls, 0)
+})
+
+test('preserves legacy observation evaluation for schema-1 installed releases', async (t) => {
+  const value = await fixture(t)
+  await writeFile(path.join(value.target, '.agents/zukan/repository-capabilities.json'), '{}\n')
+  await writeFile(path.join(value.target, '.agents/zukan/bin/evaluate-route-admission.mjs'), 'fixture\n')
+  const observations = path.join(value.target, 'observations.json')
+  await writeFile(observations, '{}\n')
+  const calls = []
+  const result = await evaluateAdmission({
+    target: value.target,
+    route: 'small-feature',
+    observationsFile: observations,
+    runner: async (_command, args) => { calls.push(args); return { stdout: '{"status":"ready"}\n', stderr: '', exitCode: 0 } },
+  })
+  assert.equal(result.exitCode, 0)
+  assert.deepEqual(calls[0].slice(1, 7), [
+    '--contract', path.join(await realpath(value.target), '.agents/zukan/workflow/v1-capability-contract.json'),
+    '--route', 'small-feature', '--observations', observations,
   ])
 })
 

@@ -181,6 +181,21 @@ test('a stable release must use the certified manifest schema and bind its contr
   assert.deepEqual(await readdir(driftedTarget), ['.git'])
 })
 
+test('installs a schema-3 release only with its compatible bootstrap bound into the lock', async (t) => {
+  const target = await targetFixture(t)
+  const release = await createFixtureRelease(t, {
+    release: 'v1.3.0', certified: true, prerelease: false, minimumBootstrapVersion: '0.2.0',
+  })
+  await installRelease({
+    target,
+    github: release.github({ authorized: true }),
+    verifySigstore: release.verifier(),
+  })
+  const lock = JSON.parse(await readFile(path.join(target, '.agents/zukan/release-lock.json')))
+  assert.equal(lock.schemaVersion, 3)
+  assert.equal(lock.minimumBootstrapVersion, '0.2.0')
+})
+
 test('default release selection rejects prerelease tags even when metadata says stable', async (t) => {
   const target = await targetFixture(t)
   const mislabeled = await createFixtureRelease(t, {

@@ -73,8 +73,9 @@ export async function createFixtureRelease(t, options = {}) {
     },
   } : null
   const certificationBytes = certified ? Buffer.from(`${JSON.stringify(certification, null, 2)}\n`) : null
+  const minimumBootstrapVersion = options.minimumBootstrapVersion
   const manifest = {
-    schemaVersion: certified ? 2 : 1,
+    schemaVersion: certified ? (minimumBootstrapVersion ? 3 : 2) : 1,
     kind: 'zukan-agent-release',
     repository: PRIVATE_REPOSITORY,
     release,
@@ -84,6 +85,7 @@ export async function createFixtureRelease(t, options = {}) {
       : expectedProducer(release),
     archive: { name: RELEASE_ASSETS.archive, sha256: sha256(archive) },
     ...(certified ? { certification: { name: certificationAsset, sha256: sha256(certificationBytes) } } : {}),
+    ...(minimumBootstrapVersion ? { minimumBootstrapVersion } : {}),
     files: inventory.sort((left, right) => left.path.localeCompare(right.path)),
   }
   const manifestBytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`)

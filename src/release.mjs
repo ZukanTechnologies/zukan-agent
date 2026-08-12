@@ -7,6 +7,7 @@ import {
   validateCertification,
   validateManifest,
   validateReleaseName,
+  requireCompatibleBootstrap,
 } from './contracts.mjs'
 import { extractVerifiedArchive } from './archive.mjs'
 
@@ -23,6 +24,7 @@ export function releaseLock({ manifest, manifestBytes, bundleBytes, certificatio
     manifestSha256: sha256(manifestBytes),
     signatureBundleSha256: sha256(bundleBytes),
     ...(certificationBytes ? { certificationSha256: sha256(certificationBytes) } : {}),
+    ...(manifest.minimumBootstrapVersion ? { minimumBootstrapVersion: manifest.minimumBootstrapVersion } : {}),
     producer: manifest.producer,
     files: manifest.files,
   }
@@ -40,10 +42,11 @@ export async function resolveVerifiedRelease({ requestedRelease, github, verifyS
   const bundleBytes = await github.downloadAsset(release, RELEASE_ASSETS.bundle)
   const archive = await github.downloadAsset(release, RELEASE_ASSETS.archive)
   const manifest = validateManifest(parseJson(manifestBytes, 'release manifest'), selectedRelease)
-  if (isStableRelease(selectedRelease) && manifest.schemaVersion !== 2) {
+  if (isStableRelease(selectedRelease) && ![2, 3].includes(manifest.schemaVersion)) {
     throw new Error('stable releases must use the certified manifest schema')
   }
-  const certificationBytes = manifest.schemaVersion === 2
+  if (manifest.schemaVersion === 3) requireCompatibleBootstrap(manifest.minimumBootstrapVersion)
+  const certificationBytes = [2, 3].includes(manifest.schemaVersion)
     ? await github.downloadAsset(release, RELEASE_ASSETS.certification)
     : null
   const resolvedRevision = await github.resolveTag(PRIVATE_REPOSITORY, selectedRelease)

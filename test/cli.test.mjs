@@ -112,18 +112,51 @@ test('CLI binds signed repository policy only through an explicit local or PR op
   assert.deepEqual(calls, [['publish'], ['doctor'], ['bind', '/tmp/policy.json', '/tmp/attestation.json']])
 })
 
-test('CLI verifies the installed release before evaluating one signed admission route', async () => {
+test('CLI verifies the installed release before resolving one harness admission route', async () => {
   const calls = []
   const result = await runCli([
-    'admit', '--route', 'production-incident', '--observations', '/tmp/current.json',
+    'admit', '--route', 'production-incident', '--harness', 'codex',
+    '--target', 'sentry.telemetry=sentry:organization/zukan-tech/zukan-worker',
+    '--target', 'operations.logs=railway:project/zukan/service/worker',
   ], {
     cwd: () => '/consumer',
     doctor: async () => { calls.push('doctor'); return { status: 'healthy', release: 'v0.1.0-alpha.6', revision: 'd'.repeat(40) } },
     admit: async (options) => {
-      calls.push(['admit', options.route, options.observationsFile])
-      return { output: '{"status":"blocked"}', exitCode: 1 }
+      calls.push(['admit', options.route, options.harness, options.targets])
+      return { output: '{"status":"requires-readback"}', exitCode: 0 }
     },
   })
-  assert.deepEqual(result, { output: '{"status":"blocked"}', exitCode: 1 })
-  assert.deepEqual(calls, ['doctor', ['admit', 'production-incident', '/tmp/current.json']])
+  assert.deepEqual(result, { output: '{"status":"requires-readback"}', exitCode: 0 })
+  assert.deepEqual(calls, ['doctor', ['admit', 'production-incident', 'codex', [
+    'sentry.telemetry=sentry:organization/zukan-tech/zukan-worker',
+    'operations.logs=railway:project/zukan/service/worker',
+  ]]])
+})
+
+test('CLI requires a supported harness and rejects duplicate target capability selections', async () => {
+  const dependencies = { doctor: async () => { throw new Error('must not run') } }
+  await assert.rejects(runCli(['admit', '--route', 'bug'], dependencies), /harness/i)
+  await assert.rejects(runCli(['admit', '--route', 'bug', '--harness', 'other'], dependencies), /harness/i)
+  await assert.rejects(runCli([
+    'admit', '--route', 'bug', '--harness', 'codex',
+    '--target', 'sentry.telemetry=sentry:organization/zukan-tech/zukan-api',
+    '--target', 'sentry.telemetry=sentry:organization/zukan-tech/zukan-web',
+  ], dependencies), /duplicate.*target/i)
+})
+
+test('CLI preserves schema-1 observation dispatch for valid older release pins', async () => {
+  const calls = []
+  const result = await runCli([
+    'admit', '--route', 'small-feature', '--observations', '/tmp/v1.json',
+  ], {
+    cwd: () => '/consumer',
+    doctor: async () => ({ status: 'healthy', release: 'v1.2.0', revision: 'd'.repeat(40) }),
+    admit: async (options) => { calls.push(options); return { output: '{"status":"ready"}', exitCode: 0 } },
+  })
+  assert.equal(result.exitCode, 0)
+  assert.equal(calls[0].observationsFile, '/tmp/v1.json')
+  assert.equal(calls[0].harness, undefined)
+  await assert.rejects(runCli([
+    'admit', '--route', 'bug', '--observations', '/tmp/v1.json', '--harness', 'codex',
+  ]), /mutually exclusive/i)
 })

@@ -7,7 +7,8 @@ import { updateRelease } from './update.mjs'
 import { checkForUpdate } from './updates.mjs'
 import { verifySigstoreRelease } from './verify.mjs'
 
-const usage = 'Usage: zukan-agent <install|update> [--release <tag>] [--pr] [--migrate-legacy] | bind-policy --policy <file> --attestation <file> [--pr] | admit --route <intent> --observations <file> | doctor'
+const usage = 'Usage: zukan-agent <install|update> [--release <tag>] [--pr] [--migrate-legacy] | bind-policy --policy <file> --attestation <file> [--pr] | admit --route <intent> (--harness <claude-code|codex|opencode> [--target <capability=resource>]... | --observations <file>) | doctor'
+const supportedHarnesses = new Set(['claude-code', 'codex', 'opencode'])
 
 function parse(arguments_) {
   const [command, ...rest] = arguments_
@@ -38,13 +39,20 @@ function parse(arguments_) {
     return selection
   }
   if (command === 'admit') {
-    const selection = { command }
+    const selection = { command, targets: [] }
     for (let index = 0; index < rest.length; index += 1) {
       if (rest[index] === '--route' && !selection.route && rest[index + 1]) selection.route = rest[++index]
+      else if (rest[index] === '--harness' && !selection.harness && rest[index + 1]) selection.harness = rest[++index]
       else if (rest[index] === '--observations' && !selection.observationsFile && rest[index + 1]) selection.observationsFile = rest[++index]
+      else if (rest[index] === '--target' && rest[index + 1]) selection.targets.push(rest[++index])
       else throw new Error(`${usage}; each admit option may appear once and requires one value`)
     }
-    if (!selection.route || !selection.observationsFile) throw new Error(`${usage}; admit requires --route and --observations`)
+    if (!selection.route || (!selection.harness && !selection.observationsFile)) throw new Error(`${usage}; admit requires --route and one admission mode`)
+    if (selection.harness && selection.observationsFile) throw new Error(`${usage}; --harness and --observations are mutually exclusive admission modes`)
+    if (selection.observationsFile && selection.targets.length) throw new Error(`${usage}; --target requires --harness`)
+    if (selection.harness && !supportedHarnesses.has(selection.harness)) throw new Error(`${usage}; admission harness is not supported`)
+    const capabilities = selection.targets.map((target) => target.split('=', 1)[0])
+    if (new Set(capabilities).size !== capabilities.length) throw new Error(`${usage}; duplicate admission target capability`)
     return selection
   }
   throw new Error(`${usage}; unknown command`)
@@ -70,6 +78,8 @@ export async function runCli(arguments_, dependencies = {}) {
     return (dependencies.admit ?? evaluateAdmission)({
       target,
       route: selection.route,
+      harness: selection.harness,
+      targets: selection.targets,
       observationsFile: selection.observationsFile,
     })
   }

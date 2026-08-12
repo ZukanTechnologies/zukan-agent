@@ -9,6 +9,7 @@ export const RELEASE_ASSETS = Object.freeze({
 })
 export const GITHUB_ACTIONS_ISSUER = 'https://token.actions.githubusercontent.com'
 export const RELEASE_WORKFLOW = 'release.yml'
+export const CURRENT_BOOTSTRAP_VERSION = '0.2.0'
 
 export const sha256 = (value) => createHash('sha256').update(value).digest('hex')
 
@@ -103,9 +104,10 @@ export function expectedProducer(release) {
 
 export function validateManifest(value, selectedRelease) {
   const manifestFields = ['schemaVersion', 'kind', 'repository', 'release', 'revision', 'producer', 'archive', 'files']
-  if (value?.schemaVersion === 2) manifestFields.push('certification')
+  if ([2, 3].includes(value?.schemaVersion)) manifestFields.push('certification')
+  if (value?.schemaVersion === 3) manifestFields.push('minimumBootstrapVersion')
   exactKeys(value, manifestFields, 'release manifest')
-  if (![1, 2].includes(value.schemaVersion) || value.kind !== 'zukan-agent-release' || value.repository !== PRIVATE_REPOSITORY) {
+  if (![1, 2, 3].includes(value.schemaVersion) || value.kind !== 'zukan-agent-release' || value.repository !== PRIVATE_REPOSITORY) {
     throw new Error('release manifest producer repository is invalid')
   }
   validateReleaseName(value.release, 'manifest release')
@@ -122,7 +124,7 @@ export function validateManifest(value, selectedRelease) {
   if (value.archive.name !== RELEASE_ASSETS.archive || !/^[a-f0-9]{64}$/.test(value.archive.sha256 ?? '')) {
     throw new Error('release archive identity is invalid')
   }
-  if (value.schemaVersion === 2) {
+  if ([2, 3].includes(value.schemaVersion)) {
     exactKeys(value.certification, ['name', 'sha256'], 'release certification')
     if (
       value.certification.name !== RELEASE_ASSETS.certification
@@ -131,6 +133,7 @@ export function validateManifest(value, selectedRelease) {
       throw new Error('release certification identity is invalid')
     }
   }
+  if (value.schemaVersion === 3) requireCompatibleBootstrap(value.minimumBootstrapVersion)
   if (!Array.isArray(value.files) || value.files.length === 0 || value.files.length > 2_000) {
     throw new Error('release file inventory is invalid')
   }
@@ -153,6 +156,24 @@ export function validateManifest(value, selectedRelease) {
     throw new Error('release skill catalog is missing')
   }
   return value
+}
+
+export function requireCompatibleBootstrap(minimumVersion, currentVersion = CURRENT_BOOTSTRAP_VERSION) {
+  const parse = (value, label) => {
+    if (typeof value !== 'string' || !/^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/.test(value)) {
+      throw new Error(`${label} is invalid`)
+    }
+    return value.split('.').map(Number)
+  }
+  const required = parse(minimumVersion, 'minimum bootstrap version')
+  const current = parse(currentVersion, 'current bootstrap version')
+  for (let index = 0; index < 3; index += 1) {
+    if (current[index] > required[index]) return minimumVersion
+    if (current[index] < required[index]) {
+      throw new Error(`installed @zukantech/agent ${currentVersion} is incompatible; install @zukantech/agent@${minimumVersion} or newer`)
+    }
+  }
+  return minimumVersion
 }
 
 export function validateCertification(value, manifest) {

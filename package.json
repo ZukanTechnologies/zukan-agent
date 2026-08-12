@@ -1,6 +1,6 @@
 {
   "name": "@zukantech/agent",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "GitHub-authorized repository bootstrap for Zukan Technologies agent workflows",
   "type": "module",
   "bin": {

@@ -82,10 +82,15 @@ async function validateBinding({ repository, policyBytes, attestation, lock, rep
   const actualRepository = await repositoryIdentity(repository)
   if (attestation.repository !== actualRepository) throw new Error('capability admission repository identity is invalid')
   const policy = parseJson(policyBytes, 'repository capability policy')
-  exactKeys(policy, [
-    'schemaVersion', 'repository', 'trustedObservationKeys', 'authorizedIdentities', 'capabilities', 'routes',
-  ], 'repository capability policy')
-  if (policy.schemaVersion !== 1 || policy.repository !== actualRepository) {
+  const policyFields = policy?.schemaVersion === 1
+    ? ['schemaVersion', 'repository', 'trustedObservationKeys', 'authorizedIdentities', 'capabilities', 'routes']
+    : ['schemaVersion', 'repository', 'capabilities', 'routes']
+  exactKeys(policy, policyFields, 'repository capability policy')
+  if (![1, 2].includes(policy.schemaVersion) || policy.repository !== actualRepository
+    || !Array.isArray(policy.capabilities) || !Array.isArray(policy.routes)
+    || (policy.schemaVersion === 1 && (!Array.isArray(policy.trustedObservationKeys)
+      || !policy.authorizedIdentities || typeof policy.authorizedIdentities !== 'object'
+      || Array.isArray(policy.authorizedIdentities)))) {
     throw new Error('repository capability policy identity is invalid')
   }
   const admission = attestation.capabilityAdmission
@@ -207,11 +212,27 @@ async function defaultAdmissionRunner(command, args) {
   }
 }
 
-export async function evaluateAdmission({ target, route, observationsFile, runner = defaultAdmissionRunner }) {
+export async function evaluateAdmission({ target, route, harness, targets = [], observationsFile, runner = defaultAdmissionRunner }) {
   if (typeof route !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(route)) throw new Error('admission route is invalid')
+  const legacy = typeof observationsFile === 'string'
+  if (!legacy && !['claude-code', 'codex', 'opencode'].includes(harness)) throw new Error('admission harness is invalid')
+  if (legacy && (harness || targets.length)) throw new Error('legacy observations cannot be combined with harness requirements')
+  if (!Array.isArray(targets) || targets.length > 32) throw new Error('admission targets are invalid')
+  const selectedCapabilities = new Set()
+  for (const selection of targets) {
+    if (typeof selection !== 'string' || selection.length > 512 || /\s/.test(selection)) {
+      throw new Error('admission target selection is invalid')
+    }
+    const match = /^([a-z][a-z0-9.-]{0,63})=(.+)$/.exec(selection)
+    if (!match || selectedCapabilities.has(match[1])) throw new Error('admission target selection is invalid')
+    selectedCapabilities.add(match[1])
+  }
   const repository = await realpath(target)
-  const observations = path.resolve(observationsFile)
-  await regularBytes(observations, 'capability observations')
+  let observations
+  if (legacy) {
+    observations = path.resolve(observationsFile)
+    await regularBytes(observations, 'capability observations')
+  }
   const evaluator = path.join(repository, '.agents/zukan/bin/evaluate-route-admission.mjs')
   const contract = path.join(repository, '.agents/zukan/workflow/v1-capability-contract.json')
   const policy = path.join(repository, '.agents/zukan/repository-capabilities.json')
@@ -220,12 +241,15 @@ export async function evaluateAdmission({ target, route, observationsFile, runne
     evaluator,
     '--contract', contract,
     '--route', route,
-    '--observations', observations,
+    ...(legacy ? ['--observations', observations] : [
+      '--harness', harness,
+      ...targets.flatMap((selection) => ['--target', selection]),
+    ]),
     '--repository', policy,
     '--release-lock', lock,
   ])
   if (![0, 1].includes(result.exitCode)) {
-    throw new Error(`capability admission evidence is invalid${result.stderr?.trim() ? `: ${result.stderr.trim()}` : ''}`)
+    throw new Error(`capability admission requirements are invalid${result.stderr?.trim() ? `: ${result.stderr.trim()}` : ''}`)
   }
   const output = result.stdout.trim()
   parseJson(output, 'capability admission result')

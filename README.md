@@ -88,6 +88,14 @@ re-verifies the persisted signed manifest, Sigstore bundle, and stable-release
 certification evidence, confirms the tag still resolves to the pinned revision,
 and checks the installed inventory and harness links for drift.
 
+GitHub login authorizes protected release access, but it does not authenticate
+the workflow's other providers. Each developer must also complete Linear MCP
+OAuth, Sentry MCP OAuth for bug/incident work, and `railway login` when the
+repository route requires Railway logs. Those sessions are per developer and
+per harness. The protected policy-signing key is never distributed to
+developers; route readiness uses current provider readbacks in the active
+harness, not a locally signed observation file.
+
 ## Signed capability admission
 
 Organization workflows may require authenticated GitHub, Linear, Sentry, and
@@ -120,19 +128,25 @@ Because the binding covers exact release bytes, updating the workflow release
 removes the old repository policy in the same transaction. Rebind a freshly
 signed policy before any route can be admitted on the new release.
 
-Each harness then supplies a current signed observation envelope from a
-repository-trusted observer. Admission independently re-runs doctor and invokes
-the verified evaluator installed by the protected release:
+Admission independently re-runs doctor and invokes the verified evaluator
+installed by the protected release. Supply the selected route, active harness,
+and any exact resource choice required by the signed repository policy:
 
 ```sh
 npx @zukantech/agent admit \
   --route production-incident \
-  --observations /path/to/current-observations.json
+  --harness codex \
+  --target sentry.telemetry=sentry:organization/zukan-tech/zukan-api
 ```
 
-A ready result exits successfully. Missing installation, authentication,
-authorization, identity membership, target access, freshness, or signature
-evidence exits nonzero with the harness-native remediation. The CLI never
+The successful result is a signed-policy requirement plan with exact or bounded
+targets and harness-native install, authentication, authorization, and
+verification instructions. It is not a readiness attestation. The active
+Claude Code, Codex, or OpenCode session must execute every emitted verification
+instruction, preserve current provider-identity, GitHub organization-membership,
+and authorized-target readbacks with the workflow evidence, and stop if any
+readback fails. A missing or out-of-policy target exits nonzero with exact
+remediation. The CLI never accepts a self-authored observation envelope or
 substitutes another tracker, telemetry source, or operations provider.
 
 The public npm package contains generic bootstrap logic only—no Zukan skills,

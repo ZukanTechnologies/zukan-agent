@@ -44,7 +44,7 @@ async function preflight(target, manifest, lockBytes) {
   const evidence = path.join(repository, '.agents/zukan/evidence', manifest.release)
   const manifestEvidence = path.join(evidence, 'manifest.json')
   const bundleEvidence = path.join(evidence, 'sigstore.json')
-  const certificationEvidence = manifest.schemaVersion === 2 ? path.join(evidence, 'certification.json') : null
+  const certificationEvidence = [2, 3].includes(manifest.schemaVersion) ? path.join(evidence, 'certification.json') : null
   if (await exists(vendor)) throw new Error('the selected vendor release path already exists')
   if (await exists(evidence)) throw new Error('the selected release evidence path already exists')
   const skills = manifest.files
